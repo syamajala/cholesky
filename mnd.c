@@ -2,9 +2,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-int **read_separators(size_t len)
+int **read_separators(char *file, size_t len)
 {
-  char *file = "lapl_20_2_ord_5.txt";
   char *line = NULL;
   ssize_t read = 0;
   int i = 0;
@@ -14,27 +13,36 @@ int **read_separators(size_t len)
   while ((read = getline(&line, &len, fp)) != -1) {
     if (i == 0)
     {
+      int levels = atoi(&(line[0]));
       int num_separators = atoi(&(line[1]));
-      separators = (int **)malloc(num_separators * sizeof(int *));
+
+      separators = (int **)malloc((num_separators+1) * sizeof(int *));
+      separators[0] = (int *)malloc(3 * sizeof(int));
+
+      separators[0][0] = levels;
+      separators[0][1] = num_separators;
+      separators[0][2] = 0;
       ++i;
+
       continue;
     }
 
     int temp_row[len];
     char *rows = strtok(line, ";");
-    int separator = atoi(&rows[0]);
+    int separator = atoi(&rows[0])+1;
     int num_rows = 0;
     rows = strtok(NULL, ",");
+
     while (rows != NULL)
     {
       int row = atoi(&rows[0]);
-      temp_row[num_rows] = row;
+      temp_row[num_rows] = row+1;
       num_rows++;
       rows = strtok(NULL, ",");
     }
-    separators[separator] = (int *)malloc(num_rows * sizeof(int));
-    memcpy(separators[separator], temp_row, num_rows);
-
+    separators[separator] = (int *)malloc((num_rows+1) * sizeof(int));
+    memcpy(separators[separator], temp_row, num_rows*sizeof(int));
+    separators[separator][num_rows] = 0;
     ++i;
   }
 
@@ -45,6 +53,43 @@ int **read_separators(size_t len)
   return separators;
 }
 
+void row_to_separator(int** separators, int* rows)
+{
+  int num_separators = separators[0][1];
+  for(int separator = 1; separator <= num_separators; separator++)
+  {
+    int *row = separators[separator];
+    while(*row)
+    {
+      rows[(*row)-1] = separator-1;
+      row++;
+    }
+  }
+}
+
+void print_separator(int **separators)
+{
+  printf("levels: %d\n", separators[0][0]);
+  printf("separators: %d\n", separators[0][1]);
+  int num_separators = separators[0][1];
+
+  for(int separator = 1; separator <= num_separators; separator++)
+  {
+    printf("separator %d:", separator-1);
+    int *row = separators[separator];
+    while(*row)
+    {
+      printf("%d ", (*row)-1);
+      row++;
+    }
+    printf("\n");
+  }
+}
+
 int main() {
-  int **separators = read_separators(400);
+  char *file = "lapl_20_2_ord_5.txt";
+  int ROWS = 400;
+  int **separators = read_separators(file, ROWS);
+  int rows[ROWS];
+  row_to_separator(separators, rows);
 }
