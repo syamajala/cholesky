@@ -6,7 +6,7 @@ LDFLAGS = -shared  # linking flags
 RM = rm -f  # rm command
 TARGET_LIB = mmio.so # target lib
 
-SRCS = mmio.c # source files
+SRCS = mmio.c mnd.c # source files
 OBJS = $(SRCS:.c=.o)
 
 .PHONY: all

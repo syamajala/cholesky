@@ -1,8 +1,8 @@
+#include "mnd.h"
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
-int **read_separators(char *file, size_t len)
+int** read_separators(char *file, size_t len)
 {
   char *line = NULL;
   ssize_t read = 0;
@@ -53,8 +53,9 @@ int **read_separators(char *file, size_t len)
   return separators;
 }
 
-void row_to_separator(int** separators, int* rows)
+int* row_to_separator(int** separators, int num_rows)
 {
+  int *rows = (int *)malloc(num_rows * sizeof(int));
   int num_separators = separators[0][1];
   for(int separator = 1; separator <= num_separators; separator++)
   {
@@ -65,6 +66,7 @@ void row_to_separator(int** separators, int* rows)
       row++;
     }
   }
+  return rows;
 }
 
 void print_separator(int **separators)
@@ -86,10 +88,10 @@ void print_separator(int **separators)
   }
 }
 
-int main() {
-  char *file = "lapl_20_2_ord_5.txt";
-  int ROWS = 400;
-  int **separators = read_separators(file, ROWS);
-  int rows[ROWS];
-  row_to_separator(separators, rows);
-}
+/* int main() { */
+/*   char *file = "lapl_20_2_ord_5.txt"; */
+/*   int ROWS = 400; */
+/*   int **separators = read_separators(file, ROWS); */
+/*   int rows[ROWS]; */
+/*   row_to_separator(separators, rows); */
+/* } */

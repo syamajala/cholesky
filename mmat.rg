@@ -4,6 +4,7 @@ terralib.includepath = terralib.includepath .. ";."
 
 terralib.linklibrary("mmio.so")
 local mmio = terralib.includec("mmio.h")
+local mnd = terralib.includec("mnd.h")
 
 -- print(mmio.mm_read_banner.type)
 
@@ -13,12 +14,11 @@ struct MMatBanner {
   NZ:int
 }
 
-terra read_matrix_banner(file:&int8)
-  var f = c.fopen(file, 'r')
+terra read_matrix_banner(file:&c.FILE)
   var matcode : mmio.MM_typecode[1]
   var ret:int
 
-  ret = mmio.mm_read_banner(f, matcode)
+  ret = mmio.mm_read_banner(file, matcode)
 
   if ret ~= 0 then
     c.printf("Unable to read banner.\n")
@@ -28,32 +28,35 @@ terra read_matrix_banner(file:&int8)
   var M : int[1]
   var N : int[1]
   var nz : int[1]
-  ret = mmio.mm_read_mtx_crd_size(f, M, N, nz)
+  ret = mmio.mm_read_mtx_crd_size(file, M, N, nz)
 
   if ret ~= 0 then
     c.printf("Unable to read matrix size.\n")
     return MMatBanner{0, 0, 0}
   end
 
-  c.fclose(f)
   return MMatBanner{M[0], N[0], nz[0]}
 end
 
--- terra read_matrix()
-  -- var I = [&int](c.malloc(sizeof(int) * nz[0]))
-  -- var J = [&int](c.malloc(sizeof(int) * nz[0]))
-  -- var val = [&double](c.malloc(sizeof(double) * nz[0]))
+struct MatrixEntry {
+  I:int
+  J:int
+  Val:double
+}
 
-  -- for i = 0, nz[0] do
-  --   c.fscanf(f, "%d %d %lg\n", &(I[i]), &(J[i]), &(val[i]))
-  --   I[i] = I[i] - 1
-  --   J[i] = J[i] - 1
-  -- end
+terra read_matrix(file:&c.FILE, nz:int)
+  var entries = [&MatrixEntry](c.malloc(sizeof(MatrixEntry) * nz))
 
-  -- for i = 0, 10 do
-  --   c.printf("I[%d]: %d J[%d]: %d val[%d]: %f\n", i, I[i], i, J[i], i, val[i])
-  -- end
--- end
+  for i = 0, nz do
+    var entry = entries[i]
+    c.fscanf(file, "%d %d %lg\n", &(entry.I), &(entry.J), &(entry.Val))
+    entry.I = entry.I - 1
+    entry.J = entry.J - 1
+    entries[i] = entry
+  end
+
+  return entries
+end
 
 terra get_raw_1d_ptr(pr : c.legion_physical_region_t[1],
                      fld : c.legion_field_id_t[1],
@@ -78,20 +81,30 @@ fspace Matrix {
   Val: double
 }
 
-
 task main()
-
-  var file = "lapl_20_2.mtx"
-  var banner = read_matrix_banner(file)
+  var matrix_file = c.fopen("lapl_20_2.mtx", 'r')
+  var banner = read_matrix_banner(matrix_file)
   c.printf("M: %d N: %d nz: %d\n", banner.M, banner.N, banner.NZ)
+
+  var separator_file = "lapl_20_2_ord_5.txt"
+  var separators = mnd.read_separators(separator_file, banner.M)
+  var idx_to_sep =  mnd.row_to_separator(separators, banner.M)
+
+  c.printf("levels: %d\n", separators[0][0])
+  c.printf("separators: %d\n", separators[0][1])
 
   var mmat = region(ispace(int1d, banner.NZ), MatrixMarket)
   var mat = region(ispace(int2d, {x = banner.M, y = banner.N}), Matrix)
 
-  var p1 = get_raw_1d_ptr(__physical(mmat.Sep), __fields(mmat.Sep), banner.NZ)
-  var p2 = get_raw_1d_ptr(__physical(mmat.Idx), __fields(mmat.Idx), banner.NZ)
+  var entries = read_matrix(matrix_file, banner.NZ)
+
+  for i = 0, banner.NZ do
+    var entry = entries[i]
+    c.printf("I[%d]: %d J[%d]: %d val[%d]: %f\n", i, entry.I, i, entry.J, i, entry.Val)
+  end
+
+  c.fclose(matrix_file)
+
 end
-
-
 
 regentlib.start(main)
