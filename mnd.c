@@ -1,6 +1,28 @@
 #include "mnd.h"
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
+
+
+int** build_separator_tree(int **separators)
+{
+  int levels = separators[0][0];
+  int num_separators = separators[0][1];
+
+  int **tree = (int **)malloc(levels*sizeof(int*));
+  for(int level = 0; level < levels; level++)
+  {
+    int elems = pow(2, level);
+    tree[level] = (int *)malloc(elems*sizeof(int));
+
+    for(int n = elems-1; n >= 0; n--)
+    {
+      tree[level][n] = num_separators;
+      num_separators--;
+    }
+  }
+  return tree;
+}
 
 int** read_separators(char *file, size_t len)
 {
@@ -40,8 +62,9 @@ int** read_separators(char *file, size_t len)
       num_rows++;
       rows = strtok(NULL, ",");
     }
-    separators[separator] = (int *)malloc((num_rows+1) * sizeof(int));
-    memcpy(separators[separator], temp_row, num_rows*sizeof(int));
+    separators[separator] = (int *)malloc((num_rows+2) * sizeof(int));
+    memcpy(&(separators[separator][1]), temp_row, num_rows*sizeof(int));
+    separators[separator][0] = num_rows;
     separators[separator][num_rows] = 0;
     ++i;
   }
@@ -59,7 +82,7 @@ int* row_to_separator(int** separators, int num_rows)
   int num_separators = separators[0][1];
   for(int separator = 1; separator <= num_separators; separator++)
   {
-    int *row = separators[separator];
+    int *row = &(separators[separator][1]);
     while(*row)
     {
       rows[(*row)-1] = separator-1;
