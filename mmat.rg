@@ -113,6 +113,7 @@ task main()
   var coloring = c.legion_domain_coloring_create()
   var prev_size = int2d{x = banner.M-1, y = banner.N-1}
 
+  -- TODO FIX THIS
   var separator_bounds : rect2d[32]
 
   for level = 0, levels do
