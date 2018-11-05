@@ -85,7 +85,7 @@ int** build_separator_tree(int **separators)
     int elems = pow(2, level);
     tree[level] = (int *)malloc(elems*sizeof(int));
 
-    for(int n = elems-1; n >= 0; n--)
+    for(int n = 0; n < elems; n++)
     {
       tree[level][n] = num_separators;
       num_separators--;

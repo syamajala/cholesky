@@ -2,7 +2,7 @@ import "regent"
 local c = regentlib.c
 terralib.includepath = terralib.includepath .. ";."
 
-terralib.linklibrary("mmio.so")
+terralib.linklibrary("/home/seshu/dev/cholesky/mmio.so")
 local mmio = terralib.includec("mmio.h")
 local mnd = terralib.includec("mnd.h")
 local math = terralib.includec("math.h")
@@ -120,7 +120,7 @@ task main()
     for sep_idx = 0, [int](math.pow(2, level)) do
       var sep = tree[level][sep_idx]
       var size = separators[sep][0]-1
-      var bounds = rect2d { prev_size - {0, size}, prev_size - {size, 0} }
+      var bounds = rect2d { prev_size - {size, size}, prev_size }
 
       separator_bounds[sep] = bounds
 
@@ -141,7 +141,7 @@ task main()
         var par_bounds = separator_bounds[par_sep]
 
         var child_bounds = rect2d{ {x = par_bounds.lo.x, y = bounds.lo.y},
-          {x = par_bounds.hi.x, y = bounds.hi.y }}
+                                   {x = par_bounds.hi.x, y = bounds.hi.y } }
 
         c.printf("block: %d %d bounds.lo: %d %d bounds.hi: %d %d\n", sep, par_sep,
                  child_bounds.lo.x, child_bounds.lo.y, child_bounds.hi.x, child_bounds.hi.y)
