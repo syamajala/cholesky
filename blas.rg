@@ -43,11 +43,7 @@ terra dgetrf_terra(x : int, n : int, bn : int,
                    fld : c.legion_field_id_t)
   var rawA = get_raw_ptr(x, x, bn, pr, fld)
   var ipiv = [&int](c.malloc(sizeof(int)*n))
-  var d:int[1]
-  d[0] = n
-  var info:int[1]
-  lapack.dgetrf_(d, d, rawA.ptr, d, ipiv, info)
-  c.printf("info: %d\n", info[0])
+  var info = lapack.LAPACKE_dgetrf(blas.CblasColMajor, n, n, rawA.ptr, n, ipiv)
   c.free(ipiv)
 end
 
@@ -57,37 +53,94 @@ do
   dgetrf_terra(x, n, bn, __physical(rA)[0], __fields(rA)[0])
 end
 
+terra dtrsm_terra(x : int, y : int, bn : int,
+                  prA : c.legion_physical_region_t,
+                  fldA : c.legion_field_id_t,
+                  prB : c.legion_physical_region_t,
+                  fldB : c.legion_field_id_t)
 
-task main()
+  var rawA = get_raw_ptr(y, x, bn, prA, fldA)
+  var rawB = get_raw_ptr(x, x, bn, prB, fldB)
+  var alpha = 1.0
 
-  var n = 3
-  var np = 1
-  var mat = region(ispace(f2d, {x = n, y = n}), double)
+  blas.cblas_dtrsm(blas.CblasColMajor, blas.CblasRight, blas.CblasLower, blas.CblasTrans, blas.CblasNonUnit, bn, bn, alpha,
+                   rawB.ptr, rawB.offset, rawA.ptr, rawA.offset)
+end
 
-  fill(mat, 0)
+task dtrsm(x : int, y : int, bn : int,
+           rA : region(ispace(f2d), double),
+           rB : region(ispace(f2d), double))
+where reads writes(rA), reads(rB)
+do
+  dtrsm_terra(x, y, bn,
+              __physical(rA)[0], __fields(rA)[0],
+              __physical(rB)[0], __fields(rB)[0])
+end
 
-  mat[{0, 0}] = 4.0
-  mat[{0, 1}] = 3.0
+terra dgemm_terra(x : int, y : int, k : int, bn : int,
+                  prA : c.legion_physical_region_t,
+                  fldA : c.legion_field_id_t,
+                  prB : c.legion_physical_region_t,
+                  fldB : c.legion_field_id_t,
+                  prC : c.legion_physical_region_t,
+                  fldC : c.legion_field_id_t)
 
-  mat[{1, 0}] = 6.0
-  mat[{1, 1}] = 3.0
+  var alpha = -1.0
+  var beta = 1.0
 
-  var coloring = c.legion_domain_coloring_create()
-  var bounds = rect2d{{0, 0}, {1, 1}}
-  c.legion_domain_coloring_color_domain(coloring, 0, bounds)
-  var mat_part = partition(disjoint, mat, coloring)
+  var rawA = get_raw_ptr(y, k, bn, prA, fldA)
+  var rawB = get_raw_ptr(y, x, bn, prB, fldB)
+  var rawC = get_raw_ptr(k, x, bn, prC, fldC)
 
-  var bn = n / np
-  var x = 0
-  dgetrf(0, n, bn, mat_part[0])
-
-  for i = 0, n do
-    for j = 0, n do
-      c.printf("%f ", mat[{i, j}])
-    end
-    c.printf('\n')
-  end
+  blas.cblas_dgemm(blas.CblasColMajor, blas.CblasNoTrans, blas.CblasTrans, bn, bn, bn,
+                   alpha, rawB.ptr, rawB.offset,
+                   rawC.ptr, rawC.offset,
+                   beta, rawA.ptr, rawA.offset)
 end
 
 
-regentlib.start(main)
+task dgemm(x : int, y : int, k : int, bn : int,
+           rA : region(ispace(f2d), double),
+           rB : region(ispace(f2d), double),
+           rC : region(ispace(f2d), double))
+where reads writes(rA), reads(rB, rC)
+do
+  dgemm_terra(x, y, k, bn,
+              __physical(rA)[0], __fields(rA)[0],
+              __physical(rB)[0], __fields(rB)[0],
+              __physical(rC)[0], __fields(rC)[0])
+end
+
+-- task main()
+
+--   var n = 4
+--   var np = 1
+--   var mat = region(ispace(f2d, {x = n, y = n}), double)
+
+--   fill(mat, 0)
+
+--   mat[{0, 0}] = 4.0
+--   mat[{0, 1}] = 3.0
+
+--   mat[{1, 0}] = 6.0
+--   mat[{1, 1}] = 3.0
+
+--   var coloring = c.legion_domain_coloring_create()
+--   var bounds = rect2d{{0, 0}, {1, 1}}
+--   c.legion_domain_coloring_color_domain(coloring, 0, bounds)
+--   var mat_part = partition(disjoint, mat, coloring)
+
+--   var bn = n / np
+--   var x = 0
+--   dgetrf(0, n, bn, mat_part[0])
+
+--   for i = 0, n do
+--     for j = 0, n do
+--       c.printf("%f ", mat[{i, j}])
+--     end
+--     c.printf('\n')
+--   end
+-- end
+
+
+-- regentlib.start(main)

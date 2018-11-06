@@ -8,6 +8,10 @@ local mnd = terralib.includec("mnd.h")
 local math = terralib.includec("math.h")
 --print(mnd.read_separators)
 
+local blas = require("blas")
+local struct __f2d { y : int, x : int }
+local f2d = regentlib.index_type(__f2d, "f2d")
+
 struct MMatBanner {
   M:int
   N:int
@@ -58,30 +62,11 @@ terra read_matrix(file:&c.FILE, nz:int)
   return entries
 end
 
-terra get_raw_1d_ptr(pr : c.legion_physical_region_t[1],
-                     fld : c.legion_field_id_t[1],
-                     len: int)
-  var fa = c.legion_physical_region_get_field_accessor_array_1d(pr[0], fld[0])
-  var rect : c.legion_rect_1d_t
-  var subrect : c.legion_rect_1d_t
-  var offsets : c.legion_byte_offset_t[2]
-  rect.lo.x[0] = 0
-  rect.hi.x[1] = len
-  var p = c.legion_accessor_array_1d_raw_rect_ptr(fa, rect, &subrect, offsets)
-  return [&int](p)
-end
-
-
 fspace MatrixMarket {
   OrigIdx: int2d,
   NewIdx: int2d,
   Sep: int1d
 }
-
-fspace Matrix {
-  Val: double
-}
-
 
 task main()
   var matrix_file = c.fopen("lapl_20_2.mtx", 'r')
@@ -100,7 +85,7 @@ task main()
   c.printf("separators: %d\n", num_separators)
 
   var mmat = region(ispace(int1d, banner.NZ), MatrixMarket)
-  var mat = region(ispace(int2d, {x = banner.M-1, y = banner.N-1}), Matrix)
+  var mat = region(ispace(f2d, {x = banner.M-1, y = banner.N-1}), double)
 
   var entries = read_matrix(matrix_file, banner.NZ)
 
@@ -151,10 +136,15 @@ task main()
     end
   end
 
-  -- var mat_part = partition(disjoint, mat, coloring)
-  -- var colors = ispace(int1d, num_separators)
-  -- var mmat_part = partition(mmat.Sep, colors)
-  -- var mat_part = image(mat, mmat_part, mmat.OrigIdx)
+  var mat_part = partition(disjoint, mat, coloring)
+  var colors = ispace(int1d, num_separators)
+  var mmat_part = partition(mmat.Sep, colors)
+
+  for c in mat_part.colors do
+    var part = mat_part[c]
+    fill(part, 0)
+  end
+
 
   c.fclose(matrix_file)
   c.free(entries)
