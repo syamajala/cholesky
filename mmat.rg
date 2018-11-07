@@ -65,7 +65,6 @@ end
 fspace MatrixMarket {
   OrigIdx: int2d,
   NewIdx: int2d,
-  Sep: int1d
 }
 
 task main()
@@ -85,17 +84,16 @@ task main()
   c.printf("separators: %d\n", num_separators)
 
   var mmat = region(ispace(int1d, banner.NZ), MatrixMarket)
-  var mat = region(ispace(f2d, {x = banner.M-1, y = banner.N-1}), double)
+  var mat = region(ispace(f2d, {x = banner.M, y = banner.N}), double)
 
   var entries = read_matrix(matrix_file, banner.NZ)
 
   for i = 0, banner.NZ do
     var entry = entries[i]
     mmat[i].OrigIdx = {entry.I, entry.J}
-    mmat[i].Sep = idx_to_sep[entry.J]
   end
 
-  var coloring = c.legion_domain_coloring_create()
+  var coloring = c.legion_domain_point_coloring_create()
   var prev_size = int2d{x = banner.M-1, y = banner.N-1}
 
   -- TODO FIX THIS
@@ -109,13 +107,15 @@ task main()
 
       separator_bounds[sep] = bounds
 
-      c.printf("level: %d sep: %d size: %d ", level, sep, size)
-      c.printf("prev_size: %d %d bounds.lo: %d %d, bounds.hi: %d %d\n",
+      c.printf("level: %d sep: %d size: %d ", level, sep, size+1)
+      c.printf("prev_size: %d %d bounds.lo: %d %d, bounds.hi: %d %d vol: %d\n",
                prev_size.x, prev_size.y,
                bounds.lo.x, bounds.lo.y,
-               bounds.hi.x, bounds.hi.y)
+               bounds.hi.x, bounds.hi.y,
+               c.legion_domain_get_volume(c.legion_domain_from_rect_2d(bounds)))
 
-      c.legion_domain_coloring_color_domain(coloring, sep, bounds)
+      var color:int2d = {x = sep, y = sep}
+      c.legion_domain_point_coloring_color_domain(coloring, color:to_domain_point(), c.legion_domain_from_rect_2d(bounds))
       prev_size = prev_size - {size+1, size+1}
 
       var par_idx:int = sep_idx
@@ -130,21 +130,30 @@ task main()
 
         c.printf("block: %d %d bounds.lo: %d %d bounds.hi: %d %d\n", sep, par_sep,
                  child_bounds.lo.x, child_bounds.lo.y, child_bounds.hi.x, child_bounds.hi.y)
-        c.legion_domain_coloring_color_domain(coloring, par_sep, child_bounds)
+
+        var color:int2d = {sep, par_sep}
+        c.legion_domain_point_coloring_color_domain(coloring, color:to_domain_point(), c.legion_domain_from_rect_2d(child_bounds))
       end
 
     end
   end
 
-  var mat_part = partition(disjoint, mat, coloring)
-  var colors = ispace(int1d, num_separators)
-  var mmat_part = partition(mmat.Sep, colors)
+  var colors = ispace(int2d, {num_separators, num_separators}, {1, 1})
+  var mat_part = partition(disjoint, mat, coloring, colors)
+  c.printf('\n')
 
-  for c in mat_part.colors do
-    var part = mat_part[c]
-    fill(part, 0)
+  for color in colors do
+    var part = mat_part[color]
+    var vol = c.legion_domain_get_volume(c.legion_domain_from_rect_2d(part.bounds))
+    if vol ~= 0 then
+      -- c.printf("color: %d %d vol: %d ", color.x, color.y, vol)
+      -- c.printf("bounds.lo: %d %d bounds.hi: %d %d\n", part.bounds.lo.x, part.bounds.lo.y, part.bounds.hi.x, part.bounds.hi.y)
+
+      fill(part, 0)
+    end
   end
 
+  c.printf("done fill")
 
   c.fclose(matrix_file)
   c.free(entries)
