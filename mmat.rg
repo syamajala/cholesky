@@ -49,7 +49,7 @@ struct MatrixEntry {
 }
 
 terra read_matrix(file:&c.FILE, nz:int)
-  var entries = [&MatrixEntry](c.malloc(sizeof(MatrixEntry) * nz))
+  var entries = [&MatrixEntry](c.malloc(sizeof(MatrixEntry) * nz+1))
 
   for i = 0, nz do
     var entry = entries[i]
@@ -139,7 +139,6 @@ task main()
       var sep2 = separators[color.y]
       var sep1_size = sep1[0]
       var sep2_size = sep2[0]
-      c.printf("Color: %d %d size1: %d size2: %d\n", color.x, color.y, sep1_size, sep2_size)
 
       fill(part, 0)
 
@@ -149,40 +148,44 @@ task main()
       for i = 0, sep1_size do
         var idxi = sep1[i+1]
 
-        for j = i, sep2_size do
+        for j = 0, sep2_size do
           var idxj = sep2[j+1]
 
-          for n = 0, banner.NZ do
-            var entry = entries[n]
-            var idx = lo + {i, j}
+          if color.x == color.y and i <= j then
+            for n = 0, banner.NZ do
+              var entry = entries[n]
+              var idx = lo + {j, i}
 
-            if entry.I == idxi and entry.J == idxj then
-              part[idx] = entry.Val
-              if part[idx] ~= 0 then
-                c.printf("Idxi: %d Idxj: %d i: %d j: %d val: %0.f\n", idxi, idxj, i, j, part[idx])
+              if entry.I == idxi and entry.J == idxj then
+                part[idx] = entry.Val
+                nz += 1
+                break
+
+              elseif entry.I == idxj and entry.J == idxi then
+                part[idx] = entry.Val
+                nz += 1
+                break
               end
-              nz += 1
-              break
+            end
 
-            elseif entry.I == idxj and entry.J == idxi then
-              part[idx] = entry.Val
-              if part[idx] ~= 0 then
-                c.printf("Idxi: %d Idxj: %d i: %d j: %d val: %0.f\n", idxi, idxj, i, j, part[idx])
+          elseif color.x ~= color.y then
+            for n = 0, banner.NZ do
+              var entry = entries[n]
+              var idx = lo + {j, i}
+
+              if entry.I == idxi and entry.J == idxj then
+                part[idx] = entry.Val
+                nz += 1
+                break
+
+              elseif entry.I == idxj and entry.J == idxi then
+                part[idx] = entry.Val
+                nz += 1
+                break
               end
-              nz += 1
-              break
-
             end
           end
         end
-      end
-
-      c.printf("bounds: (%d, %d) (%d, %d) h: %d w: %d\n", lo.x, lo.y, hi.x, hi.y, hi.x - lo.x + 1, hi.y - lo.y + 1)
-      for i = 0, sep1_size do
-        for j = 0, sep2_size do
-          c.printf("%0.f ", math.fabs(part[lo + {i, j}]))
-        end
-        c.printf("\n")
       end
     end
   end
