@@ -4,9 +4,9 @@
 #include <stdlib.h>
 
 int*** read_clusters(char *file, size_t len);
+void print_clusters(int ***clusters, int num_separators);
 int** build_separator_tree(int **separators);
 int** read_separators(char *file, size_t len);
-int* row_to_separator(int **separators, int num_rows);
-void print_separator(int **separators);
+void print_separators(int **separators);
 
 #endif

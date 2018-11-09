@@ -17,7 +17,6 @@ int*** read_clusters(char *file, size_t len)
   while ((read = getline(&line, &len, fp)) != -1) {
     if (i == 0)
     {
-      int levels = atoi(&(line[0]));
       int num_separators = atoi(&(line[1]));
 
       clusters = (int ***)malloc((num_separators+1) * sizeof(int **));
@@ -37,7 +36,7 @@ int*** read_clusters(char *file, size_t len)
     rows = strtok(NULL, ";,");
     while(rows != NULL)
     {
-      int row = atoi(&rows[0])+1;
+      int row = atoi(&rows[0]);
       temp_row[interval][dofs] = row;
       dofs++;
       rows = strtok(NULL, ";,");
@@ -128,14 +127,13 @@ int** read_separators(char *file, size_t len)
     while (rows != NULL)
     {
       int row = atoi(&rows[0]);
-      temp_row[num_rows] = row+1;
+      temp_row[num_rows] = row;
       num_rows++;
       rows = strtok(NULL, ",");
     }
-    separators[separator] = (int *)malloc((num_rows+2) * sizeof(int));
+    separators[separator] = (int *)malloc((num_rows+1) * sizeof(int));
     memcpy(&(separators[separator][1]), temp_row, num_rows*sizeof(int));
     separators[separator][0] = num_rows;
-    separators[separator][num_rows] = 0;
     ++i;
   }
 
@@ -146,23 +144,7 @@ int** read_separators(char *file, size_t len)
   return separators;
 }
 
-int* row_to_separator(int** separators, int num_rows)
-{
-  int *rows = (int *)malloc(num_rows * sizeof(int));
-  int num_separators = separators[0][1];
-  for(int separator = 1; separator <= num_separators; separator++)
-  {
-    int *row = &(separators[separator][1]);
-    while(*row)
-    {
-      rows[(*row)-1] = separator-1;
-      row++;
-    }
-  }
-  return rows;
-}
-
-void print_separator(int **separators)
+void print_separators(int **separators)
 {
   printf("levels: %d\n", separators[0][0]);
   printf("separators: %d\n", separators[0][1]);
@@ -170,21 +152,42 @@ void print_separator(int **separators)
 
   for(int separator = 1; separator <= num_separators; separator++)
   {
-    printf("separator %d:", separator-1);
-    int *row = separators[separator];
-    while(*row)
+    int separator_size = separators[separator][0];
+    printf("separator %d size %d: ", separator, separator_size);
+    for(int row = 1; row <= separator_size; row++)
     {
-      printf("%d ", (*row)-1);
-      row++;
+      printf("%d ", separators[separator][row]);
+    }
+    printf("\n");
+  }
+}
+
+void print_clusters(int ***clusters, int num_separators)
+{
+  int *intervals = clusters[0][0];
+  for(int separator = 1; separator <= num_separators; separator++)
+  {
+    int num_intervals = intervals[separator];
+    printf("separator %d intervals %d\n", separator, num_intervals);
+
+    for(int interval = 0; interval < num_intervals; interval++)
+    {
+      int interval_size = clusters[separator][interval][0];
+      printf("interval %d: ", interval);
+      for (int dof = 1; dof <= interval_size; dof++)
+      {
+        printf("%d ", clusters[separator][interval][dof]);
+      }
+      printf("\n");
     }
     printf("\n");
   }
 }
 
 /* int main() { */
-/*   char *file = "lapl_20_2_ord_5.txt"; */
 /*   int ROWS = 400; */
-/*   int **separators = read_separators(file, ROWS); */
-/*   int rows[ROWS]; */
-/*   row_to_separator(separators, rows); */
+/*   int **separators = read_separators("lapl_20_2_ord_5.txt", ROWS); */
+/*   print_separators(separators); */
+/*   int ***clusters = read_clusters("lapl_20_2_clust_5.txt", ROWS); */
+/*   print_clusters(clusters, separators[0][1]); */
 /* } */

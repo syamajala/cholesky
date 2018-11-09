@@ -37,20 +37,18 @@ terra get_raw_ptr(y : int, x : int, bn : int,
   return raw_ptr { ptr = [&double](ptr), offset = offsets[1].offset / sizeof(double) }
 end
 
-
-terra dgetrf_terra(x : int, n : int, bn : int,
+terra dpotrf_terra(x : int, bn : int,
                    pr : c.legion_physical_region_t,
                    fld : c.legion_field_id_t)
   var rawA = get_raw_ptr(x, x, bn, pr, fld)
-  var ipiv = [&int](c.malloc(sizeof(int)*n))
-  var info = lapack.LAPACKE_dgetrf(blas.CblasColMajor, n, n, rawA.ptr, n, ipiv)
-  c.free(ipiv)
+  var uplo : rawstring = 'L'
+  var info = lapack.LAPACKE_dpotrf(blas.CblasColMajor, @uplo, bn, rawA.ptr, rawA.offset)
 end
 
-task dgetrf(x : int, n : int, bn : int, rA : region(ispace(f2d), double))
+task dpotrf(x : int, bn : int, rA : region(ispace(f2d), double))
 where reads writes(rA)
 do
-  dgetrf_terra(x, n, bn, __physical(rA)[0], __fields(rA)[0])
+  dpotrf_terra(x, bn, __physical(rA)[0], __fields(rA)[0])
 end
 
 terra dtrsm_terra(x : int, y : int, bn : int,
@@ -132,7 +130,7 @@ end
 
 --   var bn = n / np
 --   var x = 0
---   dgetrf(0, n, bn, mat_part[0])
+--   dpotrf(0, bn, mat_part[0])
 
 --   for i = 0, n do
 --     for j = 0, n do

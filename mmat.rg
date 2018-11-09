@@ -62,11 +62,6 @@ terra read_matrix(file:&c.FILE, nz:int)
   return entries
 end
 
-fspace MatrixMarket {
-  OrigIdx: int2d,
-  NewIdx: int2d,
-}
-
 task main()
   var matrix_file = c.fopen("lapl_20_2.mtx", 'r')
   var banner = read_matrix_banner(matrix_file)
@@ -74,7 +69,6 @@ task main()
 
   var separator_file = "lapl_20_2_ord_5.txt"
   var separators = mnd.read_separators(separator_file, banner.M)
-  var idx_to_sep = mnd.row_to_separator(separators, banner.M)
   var tree = mnd.build_separator_tree(separators)
 
   var levels = separators[0][0]
@@ -83,15 +77,9 @@ task main()
   c.printf("levels: %d\n", levels)
   c.printf("separators: %d\n", num_separators)
 
-  var mmat = region(ispace(int1d, banner.NZ), MatrixMarket)
   var mat = region(ispace(f2d, {x = banner.M, y = banner.N}), double)
 
   var entries = read_matrix(matrix_file, banner.NZ)
-
-  for i = 0, banner.NZ do
-    var entry = entries[i]
-    mmat[i].OrigIdx = {entry.I, entry.J}
-  end
 
   var coloring = c.legion_domain_point_coloring_create()
   var prev_size = int2d{x = banner.M-1, y = banner.N-1}
@@ -102,21 +90,21 @@ task main()
   for level = 0, levels do
     for sep_idx = 0, [int](math.pow(2, level)) do
       var sep = tree[level][sep_idx]
-      var size = separators[sep][0]-1
-      var bounds = rect2d { prev_size - {size, size}, prev_size }
+      var size = separators[sep][0]
+      var bounds = rect2d { prev_size - {size-1, size-1}, prev_size }
 
       separator_bounds[sep] = bounds
 
-      c.printf("level: %d sep: %d size: %d ", level, sep, size+1)
-      c.printf("prev_size: %d %d bounds.lo: %d %d, bounds.hi: %d %d vol: %d\n",
-               prev_size.x, prev_size.y,
-               bounds.lo.x, bounds.lo.y,
-               bounds.hi.x, bounds.hi.y,
-               c.legion_domain_get_volume(c.legion_domain_from_rect_2d(bounds)))
+      -- c.printf("level: %d sep: %d size: %d ", level, sep, size)
+      -- c.printf("prev_size: %d %d bounds.lo: %d %d, bounds.hi: %d %d vol: %d\n",
+      --          prev_size.x, prev_size.y,
+      --          bounds.lo.x, bounds.lo.y,
+      --          bounds.hi.x, bounds.hi.y,
+      --          c.legion_domain_get_volume(c.legion_domain_from_rect_2d(bounds)))
 
       var color:int2d = {x = sep, y = sep}
       c.legion_domain_point_coloring_color_domain(coloring, color:to_domain_point(), c.legion_domain_from_rect_2d(bounds))
-      prev_size = prev_size - {size+1, size+1}
+      prev_size = prev_size - {size, size}
 
       var par_idx:int = sep_idx
       for par_level = level-1, -1, -1 do
@@ -128,8 +116,8 @@ task main()
         var child_bounds = rect2d{ {x = par_bounds.lo.x, y = bounds.lo.y},
                                    {x = par_bounds.hi.x, y = bounds.hi.y } }
 
-        c.printf("block: %d %d bounds.lo: %d %d bounds.hi: %d %d\n", sep, par_sep,
-                 child_bounds.lo.x, child_bounds.lo.y, child_bounds.hi.x, child_bounds.hi.y)
+        -- c.printf("block: %d %d bounds.lo: %d %d bounds.hi: %d %d\n", sep, par_sep,
+        --          child_bounds.lo.x, child_bounds.lo.y, child_bounds.hi.x, child_bounds.hi.y)
 
         var color:int2d = {sep, par_sep}
         c.legion_domain_point_coloring_color_domain(coloring, color:to_domain_point(), c.legion_domain_from_rect_2d(child_bounds))
@@ -140,24 +128,69 @@ task main()
 
   var colors = ispace(int2d, {num_separators, num_separators}, {1, 1})
   var mat_part = partition(disjoint, mat, coloring, colors)
-  c.printf('\n')
 
+  var nz = 0
   for color in colors do
     var part = mat_part[color]
     var vol = c.legion_domain_get_volume(c.legion_domain_from_rect_2d(part.bounds))
+
     if vol ~= 0 then
-      -- c.printf("color: %d %d vol: %d ", color.x, color.y, vol)
-      -- c.printf("bounds.lo: %d %d bounds.hi: %d %d\n", part.bounds.lo.x, part.bounds.lo.y, part.bounds.hi.x, part.bounds.hi.y)
+      var sep1 = separators[color.x]
+      var sep2 = separators[color.y]
+      var sep1_size = sep1[0]
+      var sep2_size = sep2[0]
+      c.printf("Color: %d %d size1: %d size2: %d\n", color.x, color.y, sep1_size, sep2_size)
 
       fill(part, 0)
+
+      var lo = part.bounds.lo
+      var hi = part.bounds.hi
+
+      for i = 0, sep1_size do
+        var idxi = sep1[i+1]
+
+        for j = i, sep2_size do
+          var idxj = sep2[j+1]
+
+          for n = 0, banner.NZ do
+            var entry = entries[n]
+            var idx = lo + {i, j}
+
+            if entry.I == idxi and entry.J == idxj then
+              part[idx] = entry.Val
+              if part[idx] ~= 0 then
+                c.printf("Idxi: %d Idxj: %d i: %d j: %d val: %0.f\n", idxi, idxj, i, j, part[idx])
+              end
+              nz += 1
+              break
+
+            elseif entry.I == idxj and entry.J == idxi then
+              part[idx] = entry.Val
+              if part[idx] ~= 0 then
+                c.printf("Idxi: %d Idxj: %d i: %d j: %d val: %0.f\n", idxi, idxj, i, j, part[idx])
+              end
+              nz += 1
+              break
+
+            end
+          end
+        end
+      end
+
+      c.printf("bounds: (%d, %d) (%d, %d) h: %d w: %d\n", lo.x, lo.y, hi.x, hi.y, hi.x - lo.x + 1, hi.y - lo.y + 1)
+      for i = 0, sep1_size do
+        for j = 0, sep2_size do
+          c.printf("%0.f ", math.fabs(part[lo + {i, j}]))
+        end
+        c.printf("\n")
+      end
     end
   end
 
-  c.printf("done fill")
+  c.printf("done fill: %d %d\n", nz, banner.NZ)
 
   c.fclose(matrix_file)
   c.free(entries)
-  c.free(idx_to_sep)
   for i = 0, num_separators+1 do
     c.free(separators[i])
   end
