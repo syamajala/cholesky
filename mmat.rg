@@ -9,8 +9,6 @@ local math = terralib.includec("math.h")
 --print(mnd.read_separators)
 
 local blas = require("blas")
-local struct __f2d { y : int, x : int }
-local f2d = regentlib.index_type(__f2d, "f2d")
 
 struct MMatBanner {
   M:int
@@ -62,12 +60,42 @@ terra read_matrix(file:&c.FILE, nz:int)
   return entries
 end
 
+task print_blocks(mat: region(ispace(int2d), double), mat_part: partition(disjoint, mat, ispace(int2d)))
+where
+  reads(mat)
+do
+  for color in mat_part.colors do
+    var part = mat_part[color]
+    var vol = c.legion_domain_get_volume(c.legion_domain_from_rect_2d(part.bounds))
+
+    if vol ~= 0 then
+      var size = part.bounds.hi - part.bounds.lo + {1, 1}
+      if color.x == color.y then
+        c.printf("Color: %d %d size1: %d size2: %d vol: %d\n", color.x, color.y, size.x, size.y, vol)
+        for i = 0, size.x do
+          for j = 0, size.y do
+            var frmt_str:rawstring
+            var val = part[part.bounds.lo + {i, j}]
+            if val < 0 then
+              frmt_str = "%0.f "
+            else
+              frmt_str = " %0.f "
+            end
+            c.printf(frmt_str, val)
+          end
+          c.printf("\n")
+        end
+      end
+    end
+  end
+end
+
 task main()
-  var matrix_file = c.fopen("lapl_20_2.mtx", 'r')
+  var matrix_file = c.fopen("lapl_3_2.mtx", 'r')
   var banner = read_matrix_banner(matrix_file)
   c.printf("M: %d N: %d nz: %d\n", banner.M, banner.N, banner.NZ)
 
-  var separator_file = "lapl_20_2_ord_5.txt"
+  var separator_file = "lapl_3_2_ord_2.txt"
   var separators = mnd.read_separators(separator_file, banner.M)
   var tree = mnd.build_separator_tree(separators)
 
@@ -77,7 +105,7 @@ task main()
   c.printf("levels: %d\n", levels)
   c.printf("separators: %d\n", num_separators)
 
-  var mat = region(ispace(f2d, {x = banner.M, y = banner.N}), double)
+  var mat = region(ispace(int2d, {x = banner.M, y = banner.N}), double)
 
   var entries = read_matrix(matrix_file, banner.NZ)
 
@@ -95,7 +123,7 @@ task main()
 
       separator_bounds[sep] = bounds
 
-      -- c.printf("level: %d sep: %d size: %d ", level, sep, size)
+      -- c.printf("level: %d sep: %d size: %d id: %d ", level, sep, size, num_parts)
       -- c.printf("prev_size: %d %d bounds.lo: %d %d, bounds.hi: %d %d vol: %d\n",
       --          prev_size.x, prev_size.y,
       --          bounds.lo.x, bounds.lo.y,
@@ -121,8 +149,8 @@ task main()
 
         var color:int2d = {sep, par_sep}
         c.legion_domain_point_coloring_color_domain(coloring, color:to_domain_point(), c.legion_domain_from_rect_2d(child_bounds))
-      end
 
+      end
     end
   end
 
@@ -191,6 +219,17 @@ task main()
   end
 
   c.printf("done fill: %d %d\n", nz, banner.NZ)
+
+  c.printf('\n')
+  for level = levels-1, -1, -1 do
+    for sep_idx = 0, [int](math.pow(2, level)) do
+      var sep = tree[level][sep_idx]
+      var color:int2d = {sep, sep}
+      c.printf("Solve %d %d\n", sep, sep)
+      dpotrf(mat_part[color])
+    end
+  end
+  c.printf('\n')
 
   c.fclose(matrix_file)
   c.free(entries)
