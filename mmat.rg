@@ -231,6 +231,8 @@ task main()
   end
   c.printf('\n')
 
+  print_blocks(mat, mat_part)
+
   c.fclose(matrix_file)
   c.free(entries)
   for i = 0, num_separators+1 do
