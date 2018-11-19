@@ -70,34 +70,35 @@ do
 
     if vol ~= 0 then
       var size = part.bounds.hi - part.bounds.lo + {1, 1}
-      if color.x == color.y then
-        c.printf("Color: %d %d size1: %d size2: %d vol: %d\n", color.x, color.y, size.x, size.y, vol)
-        for i = 0, size.x do
-          for j = 0, size.y do
-            var frmt_str:rawstring
-            var val = part[part.bounds.lo + {i, j}]
-            if val < 0 then
-              frmt_str = "%0.f "
-            else
-              frmt_str = " %0.f "
-            end
-            c.printf(frmt_str, val)
+      c.printf("Color: %d %d size: %dx%d vol: %d\n", color.x, color.y, size.x, size.y, vol)
+      for i = 0, size.x do
+        for j = 0, size.y do
+          var frmt_str:rawstring
+          var val = part[part.bounds.lo + {i, j}]
+          if val < 0 then
+            frmt_str = "%0.2f "
+          else
+            frmt_str = " %0.2f "
           end
-          c.printf("\n")
+          c.printf(frmt_str, val)
         end
+        c.printf("\n")
       end
     end
   end
 end
 
 task main()
-  var matrix_file = c.fopen("lapl_3_2.mtx", 'r')
+  var matrix_file = c.fopen("lapl_20_2.mtx", 'r')
   var banner = read_matrix_banner(matrix_file)
   c.printf("M: %d N: %d nz: %d\n", banner.M, banner.N, banner.NZ)
 
-  var separator_file = "lapl_3_2_ord_2.txt"
+  var separator_file = "lapl_20_2_ord_5.txt"
   var separators = mnd.read_separators(separator_file, banner.M)
   var tree = mnd.build_separator_tree(separators)
+
+  var clusters_file = "lapl_20_2_clust_5.txt"
+  var clusters = mnd.read_clusters(clusters_file, banner.M)
 
   var levels = separators[0][0]
   var num_separators = separators[0][1]
@@ -112,8 +113,7 @@ task main()
   var coloring = c.legion_domain_point_coloring_create()
   var prev_size = int2d{x = banner.M-1, y = banner.N-1}
 
-  -- TODO FIX THIS
-  var separator_bounds : rect2d[32]
+  var separator_bounds = region(ispace(int1d, num_separators, 1), rect2d)
 
   for level = 0, levels do
     for sep_idx = 0, [int](math.pow(2, level)) do
@@ -220,18 +220,68 @@ task main()
 
   c.printf("done fill: %d %d\n", nz, banner.NZ)
 
-  c.printf('\n')
+  var cluster_coloring = c.legion_domain_point_coloring_create()
+  var interval = 0
+
   for level = levels-1, -1, -1 do
     for sep_idx = 0, [int](math.pow(2, level)) do
       var sep = tree[level][sep_idx]
-      var color:int2d = {sep, sep}
-      c.printf("Solve %d %d\n", sep, sep)
-      dpotrf(mat_part[color])
-    end
-  end
-  c.printf('\n')
+      var pivot = mat_part[{sep, sep}]
+      var size = pivot.bounds.hi - pivot.bounds.lo + {1, 1}
+      c.printf("Level: %d POTRF (%d, %d) Size: %dx%d\n", level, sep, sep, size.x, size.y)
+      --dpotrf(pivot)
 
-  print_blocks(mat, mat_part)
+      var par_idx = sep_idx
+      for par_level = level-1, -1, -1 do
+        par_idx = par_idx/2
+        var par_sep = tree[par_level][par_idx]
+        var off_diag = mat_part[{sep, par_sep}]
+        size = off_diag.bounds.hi - off_diag.bounds.lo + {1, 1}
+        c.printf("\tLevel: %d TRSM (%d, %d) Size: %dx%d Lo: %d %d Hi: %d %d\n",
+                 par_level, sep, par_sep, size.x, size.y,
+                 off_diag.bounds.lo.x, off_diag.bounds.lo.y,
+                 off_diag.bounds.hi.x, off_diag.bounds.hi.y)
+
+        if clusters[0][0][par_sep] > 2 and interval < clusters[0][0][par_sep] then
+          var cluster = clusters[par_sep][interval]
+          var cluster_size = cluster[0]
+
+          c.printf("\tCluster: %d Size: %d\n", interval, cluster_size)
+          var prev_lo = off_diag.bounds.lo
+          var prev_hi = off_diag.bounds.hi
+          for dof_idx = 1, cluster_size do
+            var left = cluster[dof_idx]
+            var right = cluster[dof_idx+1]
+
+            var part_size = int2d{x = right - left - 1, y = 0}
+            var color:int3d = {x = sep, y = par_sep, z = dof_idx}
+            var bounds = rect2d { prev_lo, {prev_lo.x, prev_hi.y} + part_size }
+            c.legion_domain_point_coloring_color_domain(cluster_coloring, color:to_domain_point(),
+                                                        c.legion_domain_from_rect_2d(bounds))
+
+            c.printf("\tbounds.lo: %d %d, bounds.hi: %d %d vol: %d\n",
+                     bounds.lo.x, bounds.lo.y,
+                     bounds.hi.x, bounds.hi.y,
+                     c.legion_domain_get_volume(c.legion_domain_from_rect_2d(bounds)))
+            prev_lo = bounds.lo + part_size + {1, 0}
+
+          end
+
+          var cluster_colors = ispace(int3d, {sep, par_sep, cluster_size}, {sep, par_sep, 1})
+          var cluster_part = partition(disjoint, off_diag, cluster_coloring, cluster_colors)
+
+          --dtrsm(off_diag, pivot)
+
+          --else
+          --dtrsm(off_diag, pivot)
+        end
+
+      end
+    end
+    interval += 1
+  end
+
+  -- print_blocks(mat, mat_part)
 
   c.fclose(matrix_file)
   c.free(entries)
