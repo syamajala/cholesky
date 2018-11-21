@@ -33,7 +33,7 @@ terra dpotrf_terra(rect: rect2d, m:int,
                    pr : c.legion_physical_region_t,
                    fld : c.legion_field_id_t)
   var rawA = get_raw_ptr(rect, pr, fld)
-  var uplo : rawstring = 'U'
+  var uplo : rawstring = 'L'
   var info = lapack.LAPACKE_dpotrf(blas.CblasColMajor, @uplo, m, rawA.ptr, rawA.offset)
   return info
 end
@@ -114,6 +114,14 @@ do
               __physical(rA)[0], __fields(rA)[0],
               __physical(rB)[0], __fields(rB)[0],
               __physical(rC)[0], __fields(rC)[0])
+end
+
+task transpose_copy(rSrc : region(ispace(int2d), double), rDst : region(ispace(int2d), double))
+where reads(rSrc), writes(rDst)
+do
+  for p in rSrc.ispace do
+    rDst[{ x = p.y, y = p.x }] = rSrc[p]
+  end
 end
 
 -- task main()
