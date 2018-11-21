@@ -55,6 +55,8 @@ terra dtrsm_terra(rectA:rect2d, rectB:rect2d, m:int, n:int,
   var rawB = get_raw_ptr(rectB, prB, fldB)
   var alpha = 1.0
 
+  -- all the blas functions were taken from the dense cholesky example,
+  -- these functions are incredibly confusing, A below is really blas's B
   blas.cblas_dtrsm(blas.CblasColMajor, blas.CblasRight, blas.CblasLower, blas.CblasTrans, blas.CblasNonUnit, m, n, alpha,
                    rawB.ptr, rawB.offset, rawA.ptr, rawA.offset)
 end
@@ -98,7 +100,7 @@ end
 task dgemm(rA : region(ispace(int2d), double),
            rB : region(ispace(int2d), double),
            rC : region(ispace(int2d), double))
-where reads writes(rA), reads(rB, rC)
+where reduces -(rA), reads(rB, rC)
 do
   var rectA = rA.bounds
   var sizeA:int2d = rectA.hi - rectA.lo + {1, 1}

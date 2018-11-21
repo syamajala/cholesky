@@ -229,7 +229,7 @@ task main()
       var pivot = mat_part[{sep, sep}]
       var size = pivot.bounds.hi - pivot.bounds.lo + {1, 1}
       c.printf("Level: %d POTRF (%d, %d) Size: %dx%d\n", level, sep, sep, size.x, size.y)
-      dpotrf(pivot)
+      -- dpotrf(pivot)
 
       var par_idx = sep_idx
       for par_level = level-1, -1, -1 do
@@ -243,63 +243,75 @@ task main()
                  off_diag.bounds.lo.x, off_diag.bounds.lo.y,
                  off_diag.bounds.hi.x, off_diag.bounds.hi.y)
 
-        if clusters[0][0][par_sep] > 2 and interval < clusters[0][0][par_sep] then
-          var cluster_coloring = c.legion_domain_point_coloring_create()
 
-          var cluster = clusters[par_sep][interval]
-          var cluster_size = cluster[0]
+        var cluster_coloring = c.legion_domain_point_coloring_create()
 
-          c.printf("\tCluster: %d Size: %d\n", interval, cluster_size)
-          var prev_lo = off_diag.bounds.lo
-          var prev_hi = off_diag.bounds.hi
-          for dof_idx = 1, cluster_size do
-            var left = cluster[dof_idx]
-            var right = cluster[dof_idx+1]
+        var cluster = clusters[par_sep][interval]
+        var cluster_size = cluster[0]
 
-            for i = interval-1, -1, -1 do
-              left = clusters[par_sep][i][left+1]
-              right = clusters[par_sep][i][right+1]
-            end
+        -- c.printf("\tCluster: %d Size: %d\n", interval, cluster_size)
+        var prev_lo = off_diag.bounds.lo
+        var prev_hi = off_diag.bounds.hi
+        for dof_idx = 1, cluster_size do
+          var left = cluster[dof_idx]
+          var right = cluster[dof_idx+1]
 
-            var part_size = int2d{x = right - left - 1, y = 0}
-            var color:int3d = {x = sep, y = par_sep, z = dof_idx}
-            var bounds = rect2d { prev_lo, {prev_lo.x, prev_hi.y} + part_size }
-            c.legion_domain_point_coloring_color_domain(cluster_coloring, color:to_domain_point(),
-                                                        c.legion_domain_from_rect_2d(bounds))
-
-            c.printf("\tcolor: %d %d %d left: %d right: %d bounds.lo: %d %d, bounds.hi: %d %d vol: %d dim: %d\n",
-                     color.x, color.y, color.z,
-                     left, right,
-                     bounds.lo.x, bounds.lo.y,
-                     bounds.hi.x, bounds.hi.y,
-                     c.legion_domain_get_volume(c.legion_domain_from_rect_2d(bounds)),
-                     c.legion_domain_from_rect_2d(bounds).dim
-            )
-            prev_lo = bounds.lo + part_size + {1, 0}
+          for i = interval-1, -1, -1 do
+            left = clusters[par_sep][i][left+1]
+            right = clusters[par_sep][i][right+1]
           end
 
-          var cluster_colors = ispace(int3d, {1, 1, cluster_size-1}, {sep, par_sep, 1})
-          var cluster_part = partition(disjoint, off_diag, cluster_coloring, cluster_colors)
-          c.legion_domain_point_coloring_destroy(cluster_coloring)
-          for color in cluster_colors do
-            c.printf("\tLevel: %d TRSM (%d, %d, %d)\n",
-                     par_level, color.x, color.y, color.z)
+          var part_size = int2d{x = right - left - 1, y = 0}
+          var color:int3d = {x = sep, y = par_sep, z = dof_idx}
+          var bounds = rect2d { prev_lo, {prev_lo.x, prev_hi.y} + part_size }
+          c.legion_domain_point_coloring_color_domain(cluster_coloring, color:to_domain_point(),
+                                                      c.legion_domain_from_rect_2d(bounds))
 
-            var part = cluster_part[color]
-            dtrsm(part, pivot)
-          end
+          -- c.printf("\tcolor: %d %d %d left: %d right: %d bounds.lo: %d %d, bounds.hi: %d %d vol: %d dim: %d\n",
+          --          color.x, color.y, color.z,
+          --          left, right,
+          --          bounds.lo.x, bounds.lo.y,
+          --          bounds.hi.x, bounds.hi.y,
+          --          c.legion_domain_get_volume(c.legion_domain_from_rect_2d(bounds)),
+          --          c.legion_domain_from_rect_2d(bounds).dim)
 
-        else
-          c.printf("\tLevel: %d TRSM (%d, %d)\n",
-                   par_level, sep, par_sep)
-          dtrsm(off_diag, pivot)
+          prev_lo = bounds.lo + part_size + {1, 0}
+        end
+
+        var cluster_colors = ispace(int3d, {1, 1, cluster_size-1}, {sep, par_sep, 1})
+        var cluster_part = partition(disjoint, off_diag, cluster_coloring, cluster_colors)
+        c.legion_domain_point_coloring_destroy(cluster_coloring)
+
+        for color in cluster_colors do
+          var part = cluster_part[color]
+          size = part.bounds.hi - part.bounds.lo + {1, 1}
+          c.printf("\t\tInterval: %d TRSM (%d, %d, %d) Size: %dx%d Lo: %d %d Hi: %d %d\n",
+                   interval, color.x, color.y, color.z,
+                   size.x, size.y,
+                   part.bounds.lo.x, part.bounds.lo.y,
+                   part.bounds.hi.x, part.bounds.hi.y)
+          -- dtrsm(part, pivot)
+        end
+      end
+
+      par_idx = sep_idx
+      for par_level = level-1, -1, -1 do
+        par_idx = par_idx/2
+        var par_sep = tree[par_level][par_idx]
+
+        var grandpar_idx = par_idx
+        for grandpar_level = par_level, -1, -1 do
+          var grandpar_sep = tree[grandpar_level][grandpar_idx]
+
+          c.printf("\tLevel: %d GEMM (%d, %d)\n", grandpar_level, grandpar_sep, par_sep)
+          grandpar_idx = grandpar_idx/2
         end
       end
     end
     interval += 1
   end
 
-  print_blocks(mat, mat_part)
+  -- print_blocks(mat, mat_part)
 
   c.fclose(matrix_file)
   c.free(entries)
