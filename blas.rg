@@ -55,10 +55,8 @@ terra dtrsm_terra(rectA:rect2d, rectB:rect2d, m:int, n:int,
   var rawB = get_raw_ptr(rectB, prB, fldB)
   var alpha = 1.0
 
-  -- all the blas functions were taken from the dense cholesky example,
-  -- these functions are incredibly confusing, A below is really blas's B
   blas.cblas_dtrsm(blas.CblasColMajor, blas.CblasRight, blas.CblasLower, blas.CblasTrans, blas.CblasNonUnit, m, n, alpha,
-                   rawB.ptr, rawB.offset, rawA.ptr, rawA.offset)
+                   rawA.ptr, rawA.offset, rawB.ptr, rawB.offset)
 end
 
 task dtrsm(rA : region(ispace(int2d), double),
@@ -67,7 +65,7 @@ where reads writes(rA), reads(rB)
 do
   var rectA = rA.bounds
   var rectB = rB.bounds
-  var size:int2d = rectA.hi - rectA.lo + {1, 1}
+  var size:int2d = rectB.hi - rectB.lo + {1, 1}
 
   dtrsm_terra(rectA, rectB, size.x, size.y,
               __physical(rA)[0], __fields(rA)[0],
@@ -91,16 +89,17 @@ terra dgemm_terra(rectA:rect2d, rectB:rect2d, rectC:rect2d,
   var rawC = get_raw_ptr(rectC, prC, fldC)
 
   blas.cblas_dgemm(blas.CblasColMajor, blas.CblasNoTrans, blas.CblasTrans, m, n, k,
-                   alpha, rawB.ptr, rawB.offset,
-                   rawC.ptr, rawC.offset,
-                   beta, rawA.ptr, rawA.offset)
+                   alpha, rawA.ptr, rawA.offset,
+                   rawB.ptr, rawB.offset,
+                   beta, rawC.ptr, rawC.offset)
 end
 
 
 task dgemm(rA : region(ispace(int2d), double),
            rB : region(ispace(int2d), double),
            rC : region(ispace(int2d), double))
-where reduces -(rA), reads(rB, rC)
+  -- where reduces -(rA), reads(rB, rC)
+where reads writes(rA), reads(rB, rC)
 do
   var rectA = rA.bounds
   var sizeA:int2d = rectA.hi - rectA.lo + {1, 1}
@@ -118,88 +117,3 @@ do
               __physical(rC)[0], __fields(rC)[0])
 end
 
-task transpose_copy(rSrc : region(ispace(int2d), double), rDst : region(ispace(int2d), double))
-where reads(rSrc), writes(rDst)
-do
-  for p in rSrc.ispace do
-    rDst[{ x = p.y, y = p.x }] = rSrc[p]
-  end
-end
-
--- task main()
-
---   var n = 4
---   var np = 2
---   var mat = region(ispace(int2d, {x = n, y = n}), double)
-
-  -- fill(mat, 0)
-  -- mat[{0, 0}] = 4.0
-  -- mat[{0, 1}] = 3.0
-  -- mat[{1, 0}] = 6.0
-  -- mat[{1, 1}] = 3.0
-
-  -- mat[{2, 2}] = 8.0
-  -- mat[{2, 3}] = 6.0
-  -- mat[{3, 2}] = 12.0
-  -- mat[{3, 3}] = 6.0
-
---   var coloring = c.legion_domain_point_coloring_create()
-
---   var bounds = rect2d{{0, 0}, {1, 1}}
---   var color:int2d = {0, 0}
---   c.legion_domain_point_coloring_color_domain(coloring, color:to_domain_point(), c.legion_domain_from_rect_2d(bounds))
-
---   bounds = rect2d{{2, 2}, {3, 3}}
---   color = {1, 1}
---   c.legion_domain_point_coloring_color_domain(coloring, color:to_domain_point(), c.legion_domain_from_rect_2d(bounds))
-
---   var colors = ispace(int2d, {2, 2}, {0, 0})
---   var mat_part = partition(disjoint, mat, coloring, colors)
-
---   var bn = n / np
-
---   var part = mat_part[{0,0}]
---   fill(part, 0)
---   var lo = part.bounds.lo
---   part[lo + {0, 0}] = 4.0
---   part[lo + {0, 1}] = 0.0
---   part[lo + {1, 0}] = 6.0
---   part[lo + {1, 1}] = 3.0
-
---   var info = dpotrf(mat_part[{0, 0}])
---   c.printf("Info %d\n", info)
-
---   var part2 = mat_part[{1, 1}]
---   fill(part2, 0)
---   var lo2 = part2.bounds.lo
---   part2[lo2 + {0, 0}] = 4.0*2
---   part2[lo2 + {0, 1}] = 0.0
---   part2[lo2 + {1, 0}] = 6.0*2
---   part2[lo2 + {1, 1}] = 3.0*2
-
---   dpotrf(mat_part[{1, 1}])
-
---   for color in colors do
---     var part = mat_part[color]
---     var lo = part.bounds.lo
---     var vol = c.legion_domain_get_volume(c.legion_domain_from_rect_2d(part.bounds))
---     var size = part.bounds.hi - part.bounds.lo + {1, 1}
---     c.printf("Color: %d Vol: %d\n", color, vol)
---     for i = 0, size.y do
---       for j = 0, size.x do
---         c.printf("%f ", part[lo + {i, j}])
---       end
---       c.printf('\n')
---     end
---   end
-
---   for i = 0, n do
---     for j = 0, n do
---       c.printf("%f ", mat[{i, j}])
---     end
---     c.printf('\n')
---   end
-
--- end
-
--- regentlib.start(main)
