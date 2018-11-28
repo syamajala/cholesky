@@ -14,6 +14,7 @@ struct MMatBanner {
   M:int
   N:int
   NZ:int
+  typecode:mmio.MM_typecode
 }
 
 terra read_matrix_banner(file:&c.FILE)
@@ -37,7 +38,7 @@ terra read_matrix_banner(file:&c.FILE)
     return MMatBanner{0, 0, 0}
   end
 
-  return MMatBanner{M[0], N[0], nz[0]}
+  return MMatBanner{M[0], N[0], nz[0], matcode[0]}
 end
 
 struct MatrixEntry {
@@ -58,6 +59,60 @@ terra read_matrix(file:&c.FILE, nz:int)
   end
 
   return entries
+end
+
+task write_matrix(mat: region(ispace(int2d), double),
+                  mat_part: partition(disjoint, mat, ispace(int2d)),
+                  file:rawstring,
+                  banner:MMatBanner)
+where
+  reads(mat)
+do
+  var matrix_file = c.fopen(file, 'w')
+
+  var nnz = 0
+
+  for color in mat_part.colors do
+    var part = mat_part[color]
+    var vol = c.legion_domain_get_volume(c.legion_domain_from_rect_2d(part.bounds))
+
+    if vol ~= 0 then
+      var size = part.bounds.hi - part.bounds.lo + {1, 1}
+      for i = 0, size.x do
+        for j = 0, size.y do
+          var idx = part.bounds.lo + {i, j}
+          var val = part[idx]
+          if val ~= 0 then
+            nnz += 1
+          end
+        end
+      end
+    end
+  end
+
+  mmio.mm_write_banner(matrix_file, banner.typecode)
+  mmio.mm_write_mtx_crd_size(matrix_file, banner.M, banner.N, nnz)
+
+  for color in mat_part.colors do
+    var part = mat_part[color]
+    var vol = c.legion_domain_get_volume(c.legion_domain_from_rect_2d(part.bounds))
+
+    if vol ~= 0 then
+      var size = part.bounds.hi - part.bounds.lo + {1, 1}
+      for i = 0, size.x do
+        for j = 0, size.y do
+          var idx = part.bounds.lo + {i, j}
+          var val = part[idx]
+          idx += {1, 1}
+          if val ~= 0 then
+            c.fprintf(matrix_file, "%d %d %0.5g\n", idx.x, idx.y, val)
+          end
+        end
+      end
+    end
+  end
+
+  c.fclose(matrix_file)
 end
 
 task print_blocks(mat: region(ispace(int2d), double), mat_part: partition(disjoint, mat, ispace(int2d)))
@@ -92,7 +147,7 @@ end
 task main()
   var matrix_file = c.fopen("lapl_3_2.mtx", 'r')
   var banner = read_matrix_banner(matrix_file)
-  c.printf("M: %d N: %d nz: %d\n", banner.M, banner.N, banner.NZ)
+  c.printf("M: %d N: %d nz: %d typecode: %s\n", banner.M, banner.N, banner.NZ, banner.typecode)
 
   var separator_file = "lapl_3_2_ord_2.txt"
   var separators = mnd.read_separators(separator_file, banner.M)
@@ -220,7 +275,11 @@ task main()
     end
   end
 
+  c.printf("saving permuted matrix\n")
+  write_matrix(mat, mat_part, "permuted_matrix.mtx", banner)
+
   c.printf("done fill: %d %d\n", nz, banner.NZ)
+
 
   var interval = 0
 
@@ -510,7 +569,6 @@ task main()
           var C_part = partition(disjoint, C, C_coloring, C_colors)
           c.legion_domain_point_coloring_destroy(C_coloring)
 
-          -- do gemm
           c.printf("\t\tA Vol: %d B Vol: %d C Vol: %d\n\n", A_colors.volume, B_colors.volume, C_colors.volume)
 
           var colors_volume = min(A_colors.volume, min(B_colors.volume, C_colors.volume))
@@ -561,8 +619,8 @@ task main()
     interval += 1
   end
 
-  c.printf("matrix entries")
-  print_blocks(mat, mat_part)
+  c.printf("saving factored matrix\n")
+  write_matrix(mat, mat_part, "factored_matrix.mtx", banner)
 
   c.fclose(matrix_file)
   c.free(entries)

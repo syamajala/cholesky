@@ -98,8 +98,8 @@ end
 task dgemm(rA : region(ispace(int2d), double),
            rB : region(ispace(int2d), double),
            rC : region(ispace(int2d), double))
-  -- where reduces -(rA), reads(rB, rC)
-where reads writes(rA), reads(rB, rC)
+  -- where reads(rA, rB), reduces -(rC)
+where reads(rA, rB), reads writes(rC)
 do
   var rectA = rA.bounds
   var sizeA:int2d = rectA.hi - rectA.lo + {1, 1}
