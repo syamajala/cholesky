@@ -90,15 +90,15 @@ do
 end
 
 task main()
-  var matrix_file = c.fopen("lapl_20_2.mtx", 'r')
+  var matrix_file = c.fopen("lapl_3_2.mtx", 'r')
   var banner = read_matrix_banner(matrix_file)
   c.printf("M: %d N: %d nz: %d\n", banner.M, banner.N, banner.NZ)
 
-  var separator_file = "lapl_20_2_ord_5.txt"
+  var separator_file = "lapl_3_2_ord_2.txt"
   var separators = mnd.read_separators(separator_file, banner.M)
   var tree = mnd.build_separator_tree(separators)
 
-  var clusters_file = "lapl_20_2_clust_5.txt"
+  var clusters_file = "lapl_3_2_clust_2.txt"
   var clusters = mnd.read_clusters(clusters_file, banner.M)
 
   var levels = separators[0][0]
@@ -511,7 +511,45 @@ task main()
           c.legion_domain_point_coloring_destroy(C_coloring)
 
           -- do gemm
+          c.printf("\t\tA Vol: %d B Vol: %d C Vol: %d\n\n", A_colors.volume, B_colors.volume, C_colors.volume)
 
+          var colors_volume = min(A_colors.volume, min(B_colors.volume, C_colors.volume))
+
+          if colors_volume == A_colors.volume then
+            for Acolor in A_colors do
+              var idx = Acolor.z
+              var BA = A_part[Acolor]
+              var Bcolor = int3d{sep, par_sep, idx}
+              var BB = B_part[Bcolor]
+              var Ccolor = int3d{par_sep, grandpar_sep, idx*(col_cluster_size-1)+idx}
+              var BC = C_part[Ccolor]
+
+              c.printf("\t\tGEMM C=(%d, %d, %d) A=(%d, %d, %d) B=(%d, %d, %d)\n",
+                       Ccolor.x, Ccolor.y, Ccolor.z,
+                       Acolor.x, Acolor.y, Acolor.z,
+                       Bcolor.x, Bcolor.y, Bcolor.z)
+
+              dgemm(BA, BB, BC)
+            end
+
+          elseif colors_volume == B_colors.volume then
+            for Bcolor in B_colors do
+              var idx = Bcolor.z
+              var Acolor = int3d{sep, grandpar_sep, idx}
+              var BA = A_part[Acolor]
+              var BB = B_part[Bcolor]
+              var Ccolor = int3d{par_sep, grandpar_sep, idx*(col_cluster_size-1)+idx}
+              var BC = C_part[Ccolor]
+
+              c.printf("\t\tGEMM C=(%d, %d, %d) A=(%d, %d, %d) B=(%d, %d, %d)\n",
+                       Ccolor.x, Ccolor.y, Ccolor.z,
+                       Acolor.x, Acolor.y, Acolor.z,
+                       Bcolor.x, Bcolor.y, Bcolor.z)
+
+              dgemm(BA, BB, BC)
+            end
+          end
+          c.printf("\n")
 
           grandpar_idx = grandpar_idx/2
         end
@@ -523,8 +561,8 @@ task main()
     interval += 1
   end
 
-  -- c.printf("matrix entries")
-  -- print_blocks(mat, mat_part)
+  c.printf("matrix entries")
+  print_blocks(mat, mat_part)
 
   c.fclose(matrix_file)
   c.free(entries)
