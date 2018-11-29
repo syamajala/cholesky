@@ -115,6 +115,7 @@ do
   c.fclose(matrix_file)
 end
 
+
 task print_blocks(mat: region(ispace(int2d), double), mat_part: partition(disjoint, mat, ispace(int2d)))
 where
   reads(mat)
@@ -145,15 +146,20 @@ do
 end
 
 task main()
-  var matrix_file = c.fopen("lapl_3_2.mtx", 'r')
+  -- var matrix_file = c.fopen("lapl_20_2.mtx", 'r')
+  -- var separator_file = "lapl_20_2_ord_5.txt"
+  -- var clusters_file = "lapl_20_2_clust_5.txt"
+
+  var matrix_file = c.fopen("lapl_5_2.mtx", 'r')
+  var separator_file = "lapl_5_2_ord_3.txt"
+  var clusters_file = "lapl_5_2_clust_3.txt"
+
   var banner = read_matrix_banner(matrix_file)
   c.printf("M: %d N: %d nz: %d typecode: %s\n", banner.M, banner.N, banner.NZ, banner.typecode)
 
-  var separator_file = "lapl_3_2_ord_2.txt"
   var separators = mnd.read_separators(separator_file, banner.M)
   var tree = mnd.build_separator_tree(separators)
 
-  var clusters_file = "lapl_3_2_clust_2.txt"
   var clusters = mnd.read_clusters(clusters_file, banner.M)
 
   var levels = separators[0][0]
@@ -276,7 +282,7 @@ task main()
   end
 
   c.printf("saving permuted matrix\n")
-  write_matrix(mat, mat_part, "permuted_matrix.mtx", banner)
+  write_matrix(mat, mat_part, "steps/permuted_matrix.mtx", banner)
 
   c.printf("done fill: %d %d\n", nz, banner.NZ)
 
@@ -573,40 +579,59 @@ task main()
 
           var colors_volume = min(A_colors.volume, min(B_colors.volume, C_colors.volume))
 
-          if colors_volume == A_colors.volume then
+          if grandpar_sep == par_sep then
             for Acolor in A_colors do
-              var idx = Acolor.z
-              var BA = A_part[Acolor]
-              var Bcolor = int3d{sep, par_sep, idx}
-              var BB = B_part[Bcolor]
-              var Ccolor = int3d{par_sep, grandpar_sep, idx*(col_cluster_size-1)+idx}
-              var BC = C_part[Ccolor]
+              var row = Acolor.z
+              var ABlock = A_part[Acolor]
 
-              c.printf("\t\tGEMM C=(%d, %d, %d) A=(%d, %d, %d) B=(%d, %d, %d)\n",
-                       Ccolor.x, Ccolor.y, Ccolor.z,
-                       Acolor.x, Acolor.y, Acolor.z,
-                       Bcolor.x, Bcolor.y, Bcolor.z)
+              for Bcolor in A_colors do
+                var col = Bcolor.z
 
-              dgemm(BA, BB, BC)
+                var Ccolor = int3d{par_sep, grandpar_sep, row*(col_cluster_size-1)+col}
+                var CBlock = C_part[Ccolor]
+
+                if col <= row then
+                  var BBlock = A_part[Bcolor]
+
+                  c.printf("\t\tGEMM C=(%d, %d, %d) A=(%d, %d, %d) B=(%d, %d, %d)\n",
+                           Ccolor.x, Ccolor.y, Ccolor.z,
+                           Acolor.x, Acolor.y, Acolor.z,
+                           Bcolor.x, Bcolor.y, Bcolor.z)
+
+                  dgemm(ABlock, BBlock, CBlock)
+
+                elseif col == row then
+
+                  c.printf("\t\tSYRK C=(%d, %d, %d) A=(%d, %d, %d)\n",
+                           Ccolor.x, Ccolor.y, Ccolor.z,
+                           Acolor.x, Acolor.y, Acolor.z)
+                  dsyrk(ABlock, CBlock)
+
+                end
+              end
             end
+          else
+            for Acolor in A_colors do
+              var ABlock = A_part[Acolor]
+              var row = Acolor.z
 
-          elseif colors_volume == B_colors.volume then
-            for Bcolor in B_colors do
-              var idx = Bcolor.z
-              var Acolor = int3d{sep, grandpar_sep, idx}
-              var BA = A_part[Acolor]
-              var BB = B_part[Bcolor]
-              var Ccolor = int3d{par_sep, grandpar_sep, idx*(col_cluster_size-1)+idx}
-              var BC = C_part[Ccolor]
+              for Bcolor in B_colors do
+                var BBlock = B_part[Bcolor]
+                var col = Bcolor.z
 
-              c.printf("\t\tGEMM C=(%d, %d, %d) A=(%d, %d, %d) B=(%d, %d, %d)\n",
-                       Ccolor.x, Ccolor.y, Ccolor.z,
-                       Acolor.x, Acolor.y, Acolor.z,
-                       Bcolor.x, Bcolor.y, Bcolor.z)
+                var Ccolor = int3d{par_sep, grandpar_sep, row*(col_cluster_size-1)+col}
+                var CBlock = C_part[Ccolor]
 
-              dgemm(BA, BB, BC)
+                c.printf("\t\tGEMM C=(%d, %d, %d) A=(%d, %d, %d) B=(%d, %d, %d)\n",
+                         Ccolor.x, Ccolor.y, Ccolor.z,
+                         Acolor.x, Acolor.y, Acolor.z,
+                         Bcolor.x, Bcolor.y, Bcolor.z)
+
+                dgemm(ABlock, BBlock, CBlock)
+              end
             end
           end
+
           c.printf("\n")
 
           grandpar_idx = grandpar_idx/2
@@ -620,7 +645,7 @@ task main()
   end
 
   c.printf("saving factored matrix\n")
-  write_matrix(mat, mat_part, "factored_matrix.mtx", banner)
+  write_matrix(mat, mat_part, "steps/factored_matrix.mtx", banner)
 
   c.fclose(matrix_file)
   c.free(entries)

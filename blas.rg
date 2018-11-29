@@ -94,11 +94,10 @@ terra dgemm_terra(rectA:rect2d, rectB:rect2d, rectC:rect2d,
                    beta, rawC.ptr, rawC.offset)
 end
 
-
 task dgemm(rA : region(ispace(int2d), double),
            rB : region(ispace(int2d), double),
            rC : region(ispace(int2d), double))
-  -- where reads(rA, rB), reduces -(rC)
+-- where reads(rA, rB), reduces -(rC)
 where reads(rA, rB), reads writes(rC)
 do
   var rectA = rA.bounds
@@ -117,3 +116,40 @@ do
               __physical(rC)[0], __fields(rC)[0])
 end
 
+terra dsyrk_terra(rectA:rect2d, rectC:rect2d,
+                  n:int, k:int,
+                  prA : c.legion_physical_region_t,
+                  fldA : c.legion_field_id_t,
+                  prC : c.legion_physical_region_t,
+                  fldC : c.legion_field_id_t)
+
+  var alpha = -1.0
+  var beta = 1.0
+
+  var rawA = get_raw_ptr(rectA, prA, fldA)
+  var rawC = get_raw_ptr(rectC, prC, fldC)
+
+  blas.cblas_dsyrk(blas.CblasColMajor, blas.CblasLower, blas.CblasNoTrans, n, k,
+                   alpha, rawA.ptr, rawA.offset,
+                   beta, rawC.ptr, rawC.offset)
+
+end
+
+
+task dsyrk(rA : region(ispace(int2d), double),
+           rC : region(ispace(int2d), double))
+-- where reads(rA), reduces -(rC)
+where reads(rA), reads writes(rC)
+do
+  var rectA = rA.bounds
+  var sizeA:int2d = rectA.hi - rectA.lo + {1, 1}
+  var rectC = rC.bounds
+  var sizeC:int2d = rectA.hi - rectA.lo + {1, 1}
+
+  var n = sizeC.x
+  var k = sizeA.y
+
+  dsyrk_terra(rectA, rectC, n, k,
+              __physical(rA)[0], __fields(rA)[0],
+              __physical(rC)[0], __fields(rC)[0])
+end
