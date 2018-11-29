@@ -47,6 +47,7 @@ struct MatrixEntry {
   Val:double
 }
 
+
 terra read_matrix(file:&c.FILE, nz:int)
   var entries = [&MatrixEntry](c.malloc(sizeof(MatrixEntry) * nz+1))
 
@@ -63,11 +64,13 @@ end
 
 task write_matrix(mat: region(ispace(int2d), double),
                   mat_part: partition(disjoint, mat, ispace(int2d)),
-                  file:rawstring,
+                  file:&int8,
                   banner:MMatBanner)
 where
   reads(mat)
 do
+  c.printf("Saving to file: %s\n", file)
+
   var matrix_file = c.fopen(file, 'w')
 
   var nnz = 0
@@ -113,6 +116,78 @@ do
   end
 
   c.fclose(matrix_file)
+end
+
+terra gen_filename(level:int, Ax:int, Ay:int, Bx:int, By:int, Cx:int, Cy:int, operation:rawstring, mm:bool)
+  var filename:int8[255]
+
+  if operation == "POTRF" then
+    c.sprintf(filename, "steps/potrf_lvl%d_a%d%d", level, Ax, Ay)
+  elseif operation == "TRSM" then
+    c.sprintf(filename, "steps/trsm_lvl%d_a%d%d_b%d%d", level, Ax, Ay, Bx, By)
+  elseif operation == "GEMM" then
+    c.sprintf(filename, "steps/gemm_lvl%d_a%d%d_b%d%d_c%d%d", level, Ax, Ay, Bx, By, Cx, Cy)
+  end
+
+  var ext:rawstring
+
+  if mm then
+    ext = ".mtx"
+  else
+    ext = ".txt"
+  end
+
+  c.strncat(filename, ext, 4)
+
+  return filename
+end
+
+
+task write_blocks(mat: region(ispace(int2d), double), mat_part: partition(disjoint, mat, ispace(int2d)),
+                  level:int, A:int2d, B:int2d, C:int2d, operation:rawstring, banner:MMatBanner)
+where
+  reads(mat)
+do
+  var matrix_filename = gen_filename(level, A.x, A.y, B.x, B.y, C.x, C.y, operation, true)
+  c.printf("Matrix file: %s\n", matrix_filename)
+  write_matrix(mat, mat_part, matrix_filename, banner)
+
+  var block_filename = gen_filename(level, A.x, A.y, B.x, B.y, C.x, C.y, operation, false)
+  var file = c.fopen(block_filename, 'w')
+
+  if operation == "POTRF" then
+    c.fprintf(file, "Level: %d POTRF (%d, %d)\n", level, A.x, A.y)
+  elseif operation == "TRSM" then
+    c.fprintf(file, "Level: %d TRSM B=(%d, %d) A=(%d, %d)\n",
+              level, B.x, B.y, A.x, A.y)
+  elseif operation == "GEMM" then
+    c.fprintf(file, "Level: %d GEMM C=(%d, %d) A=(%d, %d) B=(%d, %d)\n",
+              level, C.x, C.y, A.x, A.y, B.x, B.y)
+  end
+
+  for color in mat_part.colors do
+    var part = mat_part[color]
+    var vol = c.legion_domain_get_volume(c.legion_domain_from_rect_2d(part.bounds))
+
+    if vol ~= 0 then
+      var size = part.bounds.hi - part.bounds.lo + {1, 1}
+      c.fprintf(file, "Color: %d %d size: %dx%d bounds.lo: %d %d bounds.hi: %d %d vol: %d\n",
+                color.x, color.y, size.x, size.y, part.bounds.lo.x, part.bounds.lo.y, part.bounds.hi.x, part.bounds.hi.y, vol)
+      for i = 0, size.x do
+        for j = 0, size.y do
+          var frmt_str:rawstring
+          var val = part[part.bounds.lo + {i, j}]
+          if val < 0 then
+            frmt_str = "%0.2f, "
+          else
+            frmt_str = " %0.2f, "
+          end
+          c.fprintf(file, frmt_str, val)
+        end
+        c.fprintf(file, "\n")
+      end
+    end
+  end
 end
 
 
@@ -299,6 +374,8 @@ task main()
                pivot.bounds.lo.x, pivot.bounds.lo.y, pivot.bounds.hi.x, pivot.bounds.hi.y)
       dpotrf(pivot)
 
+      write_blocks(mat, mat_part, level, int2d{sep, sep}, int2d{0, 0}, int2d{0, 0}, "POTRF", banner)
+
       -- we should make an empty partition and accumulate the partitions we make during the TRSM by taking the union
       -- so we can reuse them when we do the GEMM, but right now we just partition twice
 
@@ -311,7 +388,7 @@ task main()
         var sizeB = off_diag.bounds.hi - off_diag.bounds.lo + {1, 1}
 
         c.printf("\tLevel: %d TRSM B=(%d, %d) A=(%d, %d)\n\tSizeA: %dx%d Lo: %d %d Hi: %d %d SizeB: %dx%d Lo: %d %d Hi: %d %d\n\n",
-                 par_level, sep, sep, sep, par_sep,
+                 par_level, sep, par_sep, sep, sep,
                  sizeA.x, sizeA.y, pivot.bounds.lo.x, pivot.bounds.lo.y, pivot.bounds.hi.x, pivot.bounds.hi.y,
                  sizeB.x, sizeB.y, off_diag.bounds.lo.x, off_diag.bounds.lo.y, off_diag.bounds.hi.x, off_diag.bounds.hi.y)
 
@@ -324,7 +401,7 @@ task main()
 
         var off_diag_coloring = c.legion_domain_point_coloring_create()
 
-        c.printf("\t\tPartitioning A=(%d, %d) Cluster: %d Rows: %d Cols: %d\n",
+        c.printf("\t\tPartitioning B=(%d, %d) Cluster: %d Rows: %d Cols: %d\n",
                  sep, par_sep, interval, row_cluster_size-1, col_cluster_size-1)
 
         for row = 1, row_cluster_size do
@@ -375,9 +452,11 @@ task main()
         for color in off_diag_colors do
           var part = off_diag_part[color]
 
-          c.printf("\t\tTRSM B=(%d, %d) A=(%d, %d, %d)\n", sep, sep, color.x, color.y, color.z)
+          c.printf("\t\tTRSM B=(%d, %d, %d) A=(%d, %d)\n", color.x, color.y, color.z, sep, sep)
           dtrsm(pivot, part)
         end
+
+        write_blocks(mat, mat_part, par_level, int2d{sep, sep}, int2d{sep, par_sep}, int2d{0, 0}, "TRSM", banner)
 
         c.printf("\n")
       end
@@ -590,7 +669,7 @@ task main()
                 var Ccolor = int3d{par_sep, grandpar_sep, row*(col_cluster_size-1)+col}
                 var CBlock = C_part[Ccolor]
 
-                if col <= row then
+                if col < row then
                   var BBlock = A_part[Bcolor]
 
                   c.printf("\t\tGEMM C=(%d, %d, %d) A=(%d, %d, %d) B=(%d, %d, %d)\n",
@@ -631,6 +710,9 @@ task main()
               end
             end
           end
+
+          write_blocks(mat, mat_part, grandpar_level,
+                       int2d{sep, grandpar_sep}, int2d{sep, par_sep}, int2d{par_sep, grandpar_sep}, "GEMM", banner)
 
           c.printf("\n")
 
