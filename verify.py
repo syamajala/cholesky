@@ -119,6 +119,12 @@ omat = scipy.io.mmread("steps/permuted_matrix.mtx")
 omat = omat.toarray()
 omat = np.tril(omat)
 
+cholesky_numpy = scipy.linalg.cholesky(omat, lower=True)
+
+cholesky_regent = scipy.io.mmread("steps/factored_matrix.mtx")
+cholesky_regent = cholesky_regent.toarray()
+cholesky_regent = np.tril(cholesky_regent)
+
 with open('output', 'r') as f:
     for line in f:
         line = line.lstrip().rstrip()
@@ -134,3 +140,5 @@ with open('output', 'r') as f:
             bounds = compute_bounds(line)
             operation(mat, bounds)
             verify(op_line, mat, bounds)
+
+np.allclose(cholesky_numpy, cholesky_regent, rtol=1e-04, atol=1e-04)

@@ -105,9 +105,10 @@ do
   var rectB = rB.bounds
   var sizeB:int2d = rectB.hi - rectB.lo + {1, 1}
   var rectC = rC.bounds
+  var sizeC:int2d = rectC.hi - rectC.lo + {1, 1}
 
-  var m = sizeA.x
-  var n = sizeB.y
+  var m = sizeC.x
+  var n = sizeC.y
   var k = sizeA.y
 
   dgemm_terra(rectA, rectB, rectC, m, n, k,
