@@ -64,13 +64,11 @@ end
 
 task write_matrix(mat: region(ispace(int2d), double),
                   mat_part: partition(disjoint, mat, ispace(int2d)),
-                  file:&int8,
+                  file:regentlib.string,
                   banner:MMatBanner)
 where
   reads(mat)
 do
-  c.printf("Saving to file: %s\n", file)
-
   var matrix_file = c.fopen(file, 'w')
 
   var nnz = 0
@@ -129,17 +127,18 @@ terra gen_filename(level:int, Ax:int, Ay:int, Bx:int, By:int, Cx:int, Cy:int, op
     c.sprintf(filename, "steps/gemm_lvl%d_a%d%d_b%d%d_c%d%d", level, Ax, Ay, Bx, By, Cx, Cy)
   end
 
-  var ext:rawstring
+  var ext:int8[5]
 
   if mm then
-    ext = ".mtx"
+    c.strcpy(ext, ".mtx")
   else
-    ext = ".txt"
+    c.strcpy(ext, ".txt")
   end
 
-  c.strncat(filename, ext, 4)
-
-  return filename
+  c.strcat(filename, ext)
+  var f:rawstring = filename
+  c.printf("filename: %s\n", f)
+  return f
 end
 
 
@@ -148,21 +147,20 @@ task write_blocks(mat: region(ispace(int2d), double), mat_part: partition(disjoi
 where
   reads(mat)
 do
-  var matrix_filename = gen_filename(level, A.x, A.y, B.x, B.y, C.x, C.y, operation, true)
-  c.printf("Matrix file: %s\n", matrix_filename)
+  var matrix_filename:regentlib.string = gen_filename(level, A.x, A.y, B.x, B.y, C.x, C.y, operation, true)
   write_matrix(mat, mat_part, matrix_filename, banner)
 
   var block_filename = gen_filename(level, A.x, A.y, B.x, B.y, C.x, C.y, operation, false)
   var file = c.fopen(block_filename, 'w')
 
   if operation == "POTRF" then
-    c.fprintf(file, "Level: %d POTRF (%d, %d)\n", level, A.x, A.y)
+    c.fprintf(file, "Level: %d POTRF A=(%d, %d)\n", level, A.x, A.y)
   elseif operation == "TRSM" then
-    c.fprintf(file, "Level: %d TRSM B=(%d, %d) A=(%d, %d)\n",
-              level, B.x, B.y, A.x, A.y)
+    c.fprintf(file, "Level: %d TRSM A=(%d, %d) B=(%d, %d)\n",
+              level, A.x, A.y, B.x, B.y)
   elseif operation == "GEMM" then
-    c.fprintf(file, "Level: %d GEMM C=(%d, %d) A=(%d, %d) B=(%d, %d)\n",
-              level, C.x, C.y, A.x, A.y, B.x, B.y)
+    c.fprintf(file, "Level: %d GEMM A=(%d, %d) B=(%d, %d) C=(%d, %d)\n",
+              level, A.x, A.y, B.x, B.y, C.x, C.y)
   end
 
   for color in mat_part.colors do
@@ -369,7 +367,7 @@ task main()
       var sep = tree[level][sep_idx]
       var pivot = mat_part[{sep, sep}]
       var sizeA = pivot.bounds.hi - pivot.bounds.lo + {1, 1}
-      c.printf("Level: %d POTRF (%d, %d)\nSize: %dx%d Lo: %d %d Hi: %d %d\n\n",
+      c.printf("Level: %d POTRF A=(%d, %d)\nSize: %dx%d Lo: %d %d Hi: %d %d\n\n",
                level, sep, sep, sizeA.x, sizeA.y,
                pivot.bounds.lo.x, pivot.bounds.lo.y, pivot.bounds.hi.x, pivot.bounds.hi.y)
       dpotrf(pivot)
@@ -387,8 +385,8 @@ task main()
         var off_diag = mat_part[{sep, par_sep}]
         var sizeB = off_diag.bounds.hi - off_diag.bounds.lo + {1, 1}
 
-        c.printf("\tLevel: %d TRSM B=(%d, %d) A=(%d, %d)\n\tSizeA: %dx%d Lo: %d %d Hi: %d %d SizeB: %dx%d Lo: %d %d Hi: %d %d\n\n",
-                 par_level, sep, par_sep, sep, sep,
+        c.printf("\tLevel: %d TRSM A=(%d, %d) B=(%d, %d)\n\tSizeA: %dx%d Lo: %d %d Hi: %d %d SizeB: %dx%d Lo: %d %d Hi: %d %d\n\n",
+                 par_level, sep, sep, sep, par_sep,
                  sizeA.x, sizeA.y, pivot.bounds.lo.x, pivot.bounds.lo.y, pivot.bounds.hi.x, pivot.bounds.hi.y,
                  sizeB.x, sizeB.y, off_diag.bounds.lo.x, off_diag.bounds.lo.y, off_diag.bounds.hi.x, off_diag.bounds.hi.y)
 
@@ -477,11 +475,11 @@ task main()
           var C = mat_part[{par_sep, grandpar_sep}] -- ex: 24, 28
           var sizeC = C.bounds.hi - C.bounds.lo + {1, 1}
 
-          c.printf("\tLevel: %d GEMM C=(%d, %d) A=(%d, %d) B=(%d, %d)\n\tSizeA: %dx%d Lo: %d %d Hi: %d %d SizeB: %dx%d Lo: %d %d Hi: %d %d SizeC: %dx%d Lo: %d %d Hi: %d %d\n\n",
+          c.printf("\tLevel: %d GEMM A=(%d, %d) B=(%d, %d) C=(%d, %d)\n\tSizeA: %dx%d Lo: %d %d Hi: %d %d SizeB: %dx%d Lo: %d %d Hi: %d %d SizeC: %dx%d Lo: %d %d Hi: %d %d\n\n",
                    grandpar_level,
-                   grandpar_sep, par_sep,
-                   grandpar_sep, sep,
+                   sep, grandpar_sep,
                    sep, par_sep,
+                   grandpar_sep, par_sep,
                    sizeA.x, sizeA.y, A.bounds.lo.x, A.bounds.lo.y, A.bounds.hi.x, A.bounds.hi.y,
                    sizeB.x, sizeB.y, B.bounds.lo.x, B.bounds.lo.y, B.bounds.hi.x, B.bounds.hi.y,
                    sizeC.x, sizeC.y, C.bounds.lo.x, C.bounds.lo.y, C.bounds.hi.x, C.bounds.hi.y)
@@ -712,7 +710,7 @@ task main()
           end
 
           write_blocks(mat, mat_part, grandpar_level,
-                       int2d{sep, grandpar_sep}, int2d{sep, par_sep}, int2d{par_sep, grandpar_sep}, "GEMM", banner)
+                       int2d{sep, grandpar_sep}, int2d{sep, par_sep}, int2d{grandpar_sep, par_sep}, "GEMM", banner)
 
           c.printf("\n")
 

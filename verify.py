@@ -78,7 +78,7 @@ def find_file(line):
     return 'steps/%s' % op
 
 
-def verify(line, mat):
+def verify(line, mat, bounds):
     print("Verifying:", line)
     output_file = find_file(line)
     output = scipy.io.mmread(output_file)
@@ -89,6 +89,17 @@ def verify(line, mat):
         assert(np.allclose(mat, output, rtol=1e-04, atol=1e-04))
     except AssertionError as ex:
         diff = mat - output
+        # for block, bound in bounds.items():
+        #     row, col = bound
+        #     print("Python", block, ':')
+        #     print_matrix(mat[row, col])
+        #     print()
+        #     print("Regent", block, ':')
+        #     print_matrix(output[row, col])
+        #     print()
+        #     print("Diff", block, ':')
+        #     print_matrix(diff[row, col])
+        #     print()
         print("Python:")
         print_matrix(mat)
         print()
@@ -122,5 +133,4 @@ with open('output', 'r') as f:
         elif line.startswith("Size"):
             bounds = compute_bounds(line)
             operation(mat, bounds)
-            verify(op_line, mat)
-
+            verify(op_line, mat, bounds)
