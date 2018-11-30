@@ -2,14 +2,8 @@ import scipy
 import scipy.linalg
 import scipy.io
 import numpy as np
-
-a = scipy.io.mmread("permuted_matrix.mtx")
-a = a.toarray()
-cholesky_a = scipy.linalg.cholesky(a, lower=True)
-
-factored_a = scipy.io.mmread("factored_matrix.mtx")
-factored_a = factored_a.toarray()
-factored_a = np.tril(factored_a)
+import re
+import itertools as it
 
 
 def print_matrix(mat):
@@ -20,8 +14,113 @@ def print_matrix(mat):
         print(row)
 
 
-# print_matrix(cholesky_a)
-# print()
-# print_matrix(factored_a)
+def potrf(mat, bounds):
+    rA, cA = bounds["A"]
+    mat[rA, cA] = scipy.linalg.cholesky(mat[rA, cA], lower=True)
 
-print(np.allclose(factored_a, cholesky_a))
+
+def trsm(mat, bounds):
+    rA, cA = bounds["A"]
+    rB, cB = bounds["B"]
+    mat[rB, cB] = scipy.linalg.solve(mat[rA, cA], mat[rB, cB].T).T
+
+
+def gemm(mat, bounds):
+    rA, cA = bounds["A"]
+    rB, cB = bounds["B"]
+    rC, cC = bounds["C"]
+    mat[rC, cC] = mat[rC, cC] - mat[rA, cA].dot(mat[rB, cB].T)
+
+    if bounds["A"] == bounds["B"]:
+        mat[rC, cC] = np.tril(mat[rC, cC])
+
+
+arg_map = {0: "A", 1: "B", 2: "C"}
+
+
+def compute_bounds(line):
+    los = re.findall(r'Lo: \d+ \d+', line)
+    his = re.findall(r'Hi: \d+ \d+', line)
+
+    los = list(map(lambda lo: lo.split(" "), los))
+    los = list(map(lambda lo: (int(lo[1]), int(lo[2])), los))
+
+    his = list(map(lambda hi: hi.split(" "), his))
+    his = list(map(lambda hi: (int(hi[1])+1, int(hi[2])+1), his))
+
+    bounds = {}
+    for idx, lo_hi in enumerate(list(zip(los, his))):
+        lo, hi = lo_hi
+        row = (lo[0], hi[0])
+        col = (lo[1], hi[1])
+        bounds[arg_map[idx]] = (slice(*row), slice(*col))
+
+    return bounds
+
+
+def find_file(line):
+
+    lvl = re.findall(r'Level: \d+', line)[0]
+    lvl = int(line.split(" ")[1])
+
+    blocks = re.findall(r'\((.*?,.*?)\)', line)
+    blocks = list(map(lambda b: b.split(','), blocks))
+    blocks = list(map(lambda b: (int(b[0]), int(b[1])), blocks))
+    blocks = list(it.chain.from_iterable(blocks))
+
+    if "POTRF" in line:
+        op = "potrf_lvl%d_a%d%d.mtx" % (lvl, *blocks)
+    elif "TRSM" in line:
+        op = "trsm_lvl%d_a%d%d_b%d%d.mtx" % (lvl, *blocks)
+    elif "GEMM" in line:
+        op = "gemm_lvl%d_a%d%d_b%d%d_c%d%d.mtx" % (lvl, *blocks)
+
+    return 'steps/%s' % op
+
+
+def verify(line, mat):
+    print("Verifying:", line)
+    output_file = find_file(line)
+    output = scipy.io.mmread(output_file)
+    output = output.toarray()
+    output = np.tril(output)
+
+    try:
+        assert(np.allclose(mat, output, rtol=1e-04, atol=1e-04))
+    except AssertionError as ex:
+        diff = mat - output
+        print("Python:")
+        print_matrix(mat)
+        print()
+        print("Regent:")
+        print_matrix(output)
+        print()
+        print("Diff:")
+        print_matrix(diff)
+        raise ex
+
+
+mat = scipy.io.mmread("steps/permuted_matrix.mtx")
+mat = mat.toarray()
+mat = np.tril(mat)
+
+omat = scipy.io.mmread("steps/permuted_matrix.mtx")
+omat = omat.toarray()
+omat = np.tril(omat)
+
+with open('output', 'r') as f:
+    for line in f:
+        line = line.lstrip().rstrip()
+        if line.startswith("Level"):
+            op_line = line
+            if "POTRF" in line:
+                operation = potrf
+            elif "TRSM" in line:
+                operation = trsm
+            elif "GEMM" in line:
+                operation = gemm
+        elif line.startswith("Size"):
+            bounds = compute_bounds(line)
+            operation(mat, bounds)
+            verify(op_line, mat)
+
