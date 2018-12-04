@@ -10,6 +10,9 @@ local math = terralib.includec("math.h")
 
 local blas = require("blas")
 
+terralib.linklibrary("/usr/lib/libcblas.so")
+local cblas = terralib.includec("cblas.h")
+
 struct MMatBanner {
   M:int
   N:int
@@ -61,6 +64,25 @@ terra read_matrix(file:&c.FILE, nz:int)
 
   return entries
 end
+
+terra read_b(file:rawstring, n:int)
+  var entries = [&double](c.malloc(n*sizeof(double)))
+
+  var entries_file = c.fopen(file, 'r')
+
+  for i = 0, n+3 do
+    if i < 3 then
+      var buff:int8[1024]
+      c.fgets(buff, 1024, entries_file)
+    else
+      c.fscanf(entries_file, "%lg\n", &(entries[i-3]))
+    end
+  end
+
+  c.fclose(entries_file)
+  return entries
+end
+
 
 task write_matrix(mat: region(ispace(int2d), double),
                   mat_part: partition(disjoint, mat, ispace(int2d)),
@@ -223,9 +245,15 @@ task main()
   -- var separator_file = "lapl_20_2_ord_5.txt"
   -- var clusters_file = "lapl_20_2_clust_5.txt"
 
-  var matrix_file = c.fopen("lapl_5_2.mtx", 'r')
-  var separator_file = "lapl_5_2_ord_3.txt"
-  var clusters_file = "lapl_5_2_clust_3.txt"
+  -- var matrix_file = c.fopen("lapl_5_2.mtx", 'r')
+  -- var separator_file = "lapl_5_2_ord_3.txt"
+  -- var clusters_file = "lapl_5_2_clust_3.txt"
+  -- var b_file = "B_25x25.mtx"
+
+  var matrix_file = c.fopen("lapl_3_2.mtx", 'r')
+  var separator_file = "lapl_3_2_ord_2.txt"
+  var clusters_file = "lapl_3_2_clust_2.txt"
+  var b_file = "B_9x9.mtx"
 
   var banner = read_matrix_banner(matrix_file)
   c.printf("M: %d N: %d nz: %d typecode: %s\n", banner.M, banner.N, banner.NZ, banner.typecode)
@@ -243,7 +271,7 @@ task main()
 
   var mat = region(ispace(int2d, {x = banner.M, y = banner.N}), double)
 
-  var entries = read_matrix(matrix_file, banner.NZ)
+  var matrix_entries = read_matrix(matrix_file, banner.NZ)
 
   var coloring = c.legion_domain_point_coloring_create()
   var prev_size = int2d{x = banner.M-1, y = banner.N-1}
@@ -258,12 +286,12 @@ task main()
 
       separator_bounds[sep] = bounds
 
-      -- c.printf("level: %d sep: %d size: %d ", level, sep, size)
-      -- c.printf("prev_size: %d %d bounds.lo: %d %d, bounds.hi: %d %d vol: %d\n",
-      --          prev_size.x, prev_size.y,
-      --          bounds.lo.x, bounds.lo.y,
-      --          bounds.hi.x, bounds.hi.y,
-      --          c.legion_domain_get_volume(c.legion_domain_from_rect_2d(bounds)))
+      c.printf("level: %d sep: %d size: %d ", level, sep, size)
+      c.printf("prev_size: %d %d bounds.lo: %d %d, bounds.hi: %d %d vol: %d\n",
+               prev_size.x, prev_size.y,
+               bounds.lo.x, bounds.lo.y,
+               bounds.hi.x, bounds.hi.y,
+               c.legion_domain_get_volume(c.legion_domain_from_rect_2d(bounds)))
 
       var color:int2d = {x = sep, y = sep}
       c.legion_domain_point_coloring_color_domain(coloring, color:to_domain_point(), c.legion_domain_from_rect_2d(bounds))
@@ -279,8 +307,8 @@ task main()
         var child_bounds = rect2d{ {x = par_bounds.lo.x, y = bounds.lo.y},
                                    {x = par_bounds.hi.x, y = bounds.hi.y } }
 
-        -- c.printf("block: %d %d bounds.lo: %d %d bounds.hi: %d %d\n", sep, par_sep,
-        --          child_bounds.lo.x, child_bounds.lo.y, child_bounds.hi.x, child_bounds.hi.y)
+        c.printf("block: %d %d bounds.lo: %d %d bounds.hi: %d %d\n", sep, par_sep,
+                 child_bounds.lo.x, child_bounds.lo.y, child_bounds.hi.x, child_bounds.hi.y)
 
         var color:int2d = {sep, par_sep}
         c.legion_domain_point_coloring_color_domain(coloring, color:to_domain_point(), c.legion_domain_from_rect_2d(child_bounds))
@@ -307,7 +335,6 @@ task main()
       fill(part, 0)
 
       var lo = part.bounds.lo
-      var hi = part.bounds.hi
 
       for i = 0, sep1_size do
         var idxi = sep1[i+1]
@@ -317,7 +344,7 @@ task main()
 
           if color.x == color.y and i <= j then
             for n = 0, banner.NZ do
-              var entry = entries[n]
+              var entry = matrix_entries[n]
               var idx = lo + {j, i}
 
               if entry.I == idxi and entry.J == idxj then
@@ -334,7 +361,7 @@ task main()
 
           elseif color.x ~= color.y then
             for n = 0, banner.NZ do
-              var entry = entries[n]
+              var entry = matrix_entries[n]
               var idx = lo + {j, i}
 
               if entry.I == idxi and entry.J == idxj then
@@ -359,7 +386,6 @@ task main()
 
   c.printf("done fill: %d %d\n", nz, banner.NZ)
 
-
   var interval = 0
 
   for level = levels-1, -1, -1 do
@@ -372,7 +398,7 @@ task main()
                pivot.bounds.lo.x, pivot.bounds.lo.y, pivot.bounds.hi.x, pivot.bounds.hi.y)
       dpotrf(pivot)
 
-      write_blocks(mat, mat_part, level, int2d{sep, sep}, int2d{0, 0}, int2d{0, 0}, "POTRF", banner)
+      --write_blocks(mat, mat_part, level, int2d{sep, sep}, int2d{0, 0}, int2d{0, 0}, "POTRF", banner)
 
       -- we should make an empty partition and accumulate the partitions we make during the TRSM by taking the union
       -- so we can reuse them when we do the GEMM, but right now we just partition twice
@@ -454,7 +480,7 @@ task main()
           dtrsm(pivot, part)
         end
 
-        write_blocks(mat, mat_part, par_level, int2d{sep, sep}, int2d{sep, par_sep}, int2d{0, 0}, "TRSM", banner)
+        --write_blocks(mat, mat_part, par_level, int2d{sep, sep}, int2d{sep, par_sep}, int2d{0, 0}, "TRSM", banner)
 
         c.printf("\n")
       end
@@ -709,8 +735,8 @@ task main()
             end
           end
 
-          write_blocks(mat, mat_part, grandpar_level,
-                       int2d{sep, grandpar_sep}, int2d{sep, par_sep}, int2d{grandpar_sep, par_sep}, "GEMM", banner)
+          -- write_blocks(mat, mat_part, grandpar_level,
+          --              int2d{sep, grandpar_sep}, int2d{sep, par_sep}, int2d{grandpar_sep, par_sep}, "GEMM", banner)
 
           c.printf("\n")
 
@@ -724,20 +750,117 @@ task main()
     interval += 1
   end
 
-  c.printf("saving factored matrix\n")
+  c.printf("saving factored matrix\n\n")
   write_matrix(mat, mat_part, "steps/factored_matrix.mtx", banner)
 
+  var Bentries = read_b(b_file, banner.N)
+  var B = region(ispace(int1d, banner.N), double)
+  var Bcoloring = c.legion_domain_point_coloring_create()
+  var Bprev_size = 0
+  var X = region(ispace(int1d, banner.N), double)
+
+  for sep = 1, num_separators+1 do
+    var size = separators[sep][0]
+    var bounds = rect1d { Bprev_size, Bprev_size + size - 1}
+    c.printf("Separator: %d Lo: %d Hi: %d Size: %d 1\n", sep, bounds.lo, bounds.hi, bounds.hi - bounds.lo + 1)
+    var color:int1d = int1d{ sep }
+    c.legion_domain_point_coloring_color_domain(Bcoloring, color:to_domain_point(), c.legion_domain_from_rect_1d(bounds))
+    Bprev_size = Bprev_size + size
+  end
+
+  c.printf("\n")
+
+  var Bcolors = ispace(int1d, num_separators, 1)
+  var Bpart = partition(disjoint, B, Bcoloring, Bcolors)
+  c.legion_domain_point_coloring_destroy(Bcoloring)
+
+  for Bcolor in Bcolors do
+    var part = Bpart[Bcolor]
+
+    var lo = part.bounds
+    var ib:int = [int](Bcolor)
+    var sep = separators[ib]
+    var sep_size = sep[0]
+
+    for i = 0, sep_size do
+      var idxi = sep[i+1]
+      part[part.bounds.lo + i] = Bentries[idxi]
+    end
+  end
+
+  c.printf("Forward Substitution\n")
+  for level = levels-1, -1, -1 do
+    for sep_idx = [int](math.pow(2, level))-1, -1, -1 do
+      var sep = tree[level][sep_idx]
+      var pivot = mat_part[{sep, sep}]
+      var bp = Bpart[sep]
+
+      c.printf("Level: %d TRSV A=(%d, %d) B=(%d)\n", level, sep, sep, sep)
+      dtrsv(pivot, bp, cblas.CblasLower, cblas.CblasNoTrans)
+
+      var par_idx = sep_idx
+      for par_level = level-1, -1, -1 do
+        par_idx = par_idx/2
+        var par_sep = tree[par_level][par_idx]
+
+        c.printf("\tLevel: %d GEMV A=(%d, %d) X=(%d) Y=(%d)\n", level, sep, par_sep, sep, par_sep)
+        dgemv(mat_part[{sep, par_sep}], Bpart[sep], Bpart[par_sep], cblas.CblasNoTrans)
+      end
+    end
+  end
+
+  c.printf("\nBackward Substitution\n")
+  for par_level = 0, levels do
+    for par_idx = 0, [int](math.pow(2, par_level)) do
+      var par_sep = tree[par_level][par_idx]
+      var pivot = mat_part[{par_sep, par_sep}]
+      var bp = Bpart[par_sep]
+
+      for level = par_level+1, levels do
+        for sep_idx = [int](math.pow(2, level))-1, -1, -1 do
+          var sep = tree[level][sep_idx]
+          c.printf("Level: %d GEMV A=(%d, %d) X=(%d) Y=(%d)\n", par_level, sep, par_sep, par_sep, sep)
+          dgemv(mat_part[{sep, par_sep}], Bpart[par_sep], Bpart[sep], cblas.CblasTrans)
+          for i = 0, banner.N do
+            c.printf("%f\n", B[i])
+          end
+
+        end
+      end
+
+      c.printf("Level: %d TRSV A=(%d, %d) B=(%d)\n", par_level, par_sep, par_sep, par_sep)
+      dtrsv(pivot, bp, cblas.CblasLower, cblas.CblasTrans)
+      for i = 0, banner.N do
+            c.printf("%f\n", B[i])
+      end
+
+    end
+  end
+
+  var j = 0
+  for sep = 1, num_separators+1 do
+    var size = separators[sep][0]
+    for i = 1, size+1 do
+      var idxi = separators[sep][i]
+      X[idxi] = B[j]
+      j += 1
+    end
+  end
+
   c.fclose(matrix_file)
-  c.free(entries)
+  c.free(matrix_entries)
+
   for i = 0, num_separators+1 do
     c.free(separators[i])
   end
   c.free(separators)
+
   for i = 0, levels do
     c.free(tree[i])
   end
   c.free(tree)
 
+  c.free(Bentries)
 end
 
 regentlib.start(main)

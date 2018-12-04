@@ -3,7 +3,7 @@ local c = regentlib.c
 terralib.includepath = terralib.includepath .. ";/usr/include"
 
 terralib.linklibrary("/usr/lib/libcblas.so")
-local blas = terralib.includec("cblas.h")
+local cblas = terralib.includec("cblas.h")
 
 terralib.linklibrary("/usr/lib/liblapacke.so")
 local lapack = terralib.includec("lapacke.h")
@@ -19,7 +19,7 @@ end
 
 local raw_ptr = raw_ptr_factory(double)
 
-terra get_raw_ptr(rect: rect2d,
+terra get_raw_ptr_2d(rect: rect2d,
                   pr : c.legion_physical_region_t,
                   fld : c.legion_field_id_t)
   var fa = c.legion_physical_region_get_field_accessor_array_2d(pr, fld)
@@ -29,12 +29,22 @@ terra get_raw_ptr(rect: rect2d,
   return raw_ptr { ptr = [&double](ptr), offset = offsets[1].offset / sizeof(double) }
 end
 
+terra get_raw_ptr_1d(rect: rect1d,
+                  pr : c.legion_physical_region_t,
+                  fld : c.legion_field_id_t)
+  var fa = c.legion_physical_region_get_field_accessor_array_1d(pr, fld)
+  var subrect : c.legion_rect_1d_t
+  var offsets : c.legion_byte_offset_t[1]
+  var ptr = c.legion_accessor_array_1d_raw_rect_ptr(fa, rect, &subrect, offsets)
+  return raw_ptr { ptr = [&double](ptr), offset = offsets[0].offset / sizeof(double) }
+end
+
 terra dpotrf_terra(rect: rect2d, m:int,
                    pr : c.legion_physical_region_t,
                    fld : c.legion_field_id_t)
-  var rawA = get_raw_ptr(rect, pr, fld)
+  var rawA = get_raw_ptr_2d(rect, pr, fld)
   var uplo : rawstring = 'L'
-  var info = lapack.LAPACKE_dpotrf(blas.CblasColMajor, @uplo, m, rawA.ptr, rawA.offset)
+  var info = lapack.LAPACKE_dpotrf(cblas.CblasColMajor, @uplo, m, rawA.ptr, rawA.offset)
   return info
 end
 
@@ -51,11 +61,11 @@ terra dtrsm_terra(rectA:rect2d, rectB:rect2d, m:int, n:int,
                   fldA : c.legion_field_id_t,
                   prB : c.legion_physical_region_t,
                   fldB : c.legion_field_id_t)
-  var rawA = get_raw_ptr(rectA, prA, fldA)
-  var rawB = get_raw_ptr(rectB, prB, fldB)
+  var rawA = get_raw_ptr_2d(rectA, prA, fldA)
+  var rawB = get_raw_ptr_2d(rectB, prB, fldB)
   var alpha = 1.0
 
-  blas.cblas_dtrsm(blas.CblasColMajor, blas.CblasRight, blas.CblasLower, blas.CblasTrans, blas.CblasNonUnit, m, n, alpha,
+  cblas.cblas_dtrsm(cblas.CblasColMajor, cblas.CblasRight, cblas.CblasLower, cblas.CblasTrans, cblas.CblasNonUnit, m, n, alpha,
                    rawA.ptr, rawA.offset, rawB.ptr, rawB.offset)
 end
 
@@ -84,11 +94,11 @@ terra dgemm_terra(rectA:rect2d, rectB:rect2d, rectC:rect2d,
   var alpha = -1.0
   var beta = 1.0
 
-  var rawA = get_raw_ptr(rectA, prA, fldA)
-  var rawB = get_raw_ptr(rectB, prB, fldB)
-  var rawC = get_raw_ptr(rectC, prC, fldC)
+  var rawA = get_raw_ptr_2d(rectA, prA, fldA)
+  var rawB = get_raw_ptr_2d(rectB, prB, fldB)
+  var rawC = get_raw_ptr_2d(rectC, prC, fldC)
 
-  blas.cblas_dgemm(blas.CblasColMajor, blas.CblasNoTrans, blas.CblasTrans, m, n, k,
+  cblas.cblas_dgemm(cblas.CblasColMajor, cblas.CblasNoTrans, cblas.CblasTrans, m, n, k,
                    alpha, rawA.ptr, rawA.offset,
                    rawB.ptr, rawB.offset,
                    beta, rawC.ptr, rawC.offset)
@@ -127,10 +137,10 @@ terra dsyrk_terra(rectA:rect2d, rectC:rect2d,
   var alpha = -1.0
   var beta = 1.0
 
-  var rawA = get_raw_ptr(rectA, prA, fldA)
-  var rawC = get_raw_ptr(rectC, prC, fldC)
+  var rawA = get_raw_ptr_2d(rectA, prA, fldA)
+  var rawC = get_raw_ptr_2d(rectC, prC, fldC)
 
-  blas.cblas_dsyrk(blas.CblasColMajor, blas.CblasLower, blas.CblasNoTrans, n, k,
+  cblas.cblas_dsyrk(cblas.CblasColMajor, cblas.CblasLower, cblas.CblasNoTrans, n, k,
                    alpha, rawA.ptr, rawA.offset,
                    beta, rawC.ptr, rawC.offset)
 
@@ -153,4 +163,76 @@ do
   dsyrk_terra(rectA, rectC, n, k,
               __physical(rA)[0], __fields(rA)[0],
               __physical(rC)[0], __fields(rC)[0])
+end
+
+
+terra dtrsv_terra(rectA:rect2d, rectB:rect1d, uplo:int, trans:int, n:int,
+                  prA : c.legion_physical_region_t,
+                  fldA : c.legion_field_id_t,
+                  prB : c.legion_physical_region_t,
+                  fldB : c.legion_field_id_t)
+
+  var rawA = get_raw_ptr_2d(rectA, prA, fldA)
+  var rawB = get_raw_ptr_1d(rectB, prB, fldB)
+
+  cblas.cblas_dtrsv(cblas.CblasColMajor, uplo, trans, cblas.CblasNonUnit, n,
+                    rawA.ptr, rawA.offset, rawB.ptr, rawB.offset)
+
+end
+
+task dtrsv(rA : region(ispace(int2d), double), rB : region(ispace(int1d), double), uplo:int, trans:int)
+where reads(rA), reads writes(rB)
+do
+  var rectA = rA.bounds
+  var sizeA:int2d = rectA.hi - rectA.lo + {1, 1}
+  var rectB = rB.bounds
+
+  var n = sizeA.x
+
+  dtrsv_terra(rectA, rectB, uplo, trans, n,
+              __physical(rA)[0], __fields(rA)[0],
+              __physical(rB)[0], __fields(rB)[0])
+end
+
+terra dgemv_terra(rectA:rect2d, rectX:rect1d, rectY:rect1d, trans:int, m:int, n:int,
+                  prA : c.legion_physical_region_t,
+                  fldA : c.legion_field_id_t,
+                  prX : c.legion_physical_region_t,
+                  fldX : c.legion_field_id_t,
+                  prY : c.legion_physical_region_t,
+                  fldY : c.legion_field_id_t)
+
+  var rawA = get_raw_ptr_2d(rectA, prA, fldA)
+  var rawX = get_raw_ptr_1d(rectX, prX, fldX)
+  var rawY = get_raw_ptr_1d(rectY, prY, fldY)
+
+  var alpha = -1.0
+  var beta = 1.0
+
+  cblas.cblas_dgemv(cblas.CblasColMajor, trans, m, n, alpha,
+                    rawA.ptr, rawA.offset, rawX.ptr, rawX.offset, beta, rawY.ptr, rawY.offset)
+
+end
+
+task dgemv(rA : region(ispace(int2d), double),
+           rX : region(ispace(int1d), double),
+           rY : region(ispace(int1d), double),
+          trans:int)
+where reads(rA), reads writes(rX, rY)
+do
+  var rectA = rA.bounds
+  var sizeA:int2d = rectA.hi - rectA.lo + {1, 1}
+  var rectX = rX.bounds
+  var rectY = rY.bounds
+
+  var m:int = 0
+  var n:int = 0
+
+  m = sizeA.x
+  n = sizeA.y
+
+  dgemv_terra(rectA, rectX, rectY, trans, m, n,
+              __physical(rA)[0], __fields(rA)[0],
+              __physical(rX)[0], __fields(rX)[0],
+              __physical(rY)[0], __fields(rY)[0])
 end
