@@ -240,19 +240,35 @@ do
 end
 
 task main()
-  -- var matrix_file = c.fopen("lapl_20_2.mtx", 'r')
-  -- var separator_file = "lapl_20_2_ord_5.txt"
-  -- var clusters_file = "lapl_20_2_clust_5.txt"
+  var args = c.legion_runtime_get_input_args()
 
-  -- var matrix_file = c.fopen("lapl_5_2.mtx", 'r')
-  -- var separator_file = "lapl_5_2_ord_3.txt"
-  -- var clusters_file = "lapl_5_2_clust_3.txt"
-  -- var b_file = "B_25x25.mtx"
+  var matrix_file_path = ""
+  var separator_file = ""
+  var clusters_file = ""
+  var b_file = ""
+  var solution_file = ""
+  var factor_file = ""
+  var permuted_matrix_file = ""
 
-  var matrix_file = c.fopen("lapl_3_2.mtx", 'r')
-  var separator_file = "lapl_3_2_ord_2.txt"
-  var clusters_file = "lapl_3_2_clust_2.txt"
-  var b_file = "B_9x9.mtx"
+  for i = 0, args.argc do
+    if c.strcmp(args.argv[i], "-i") == 0 then
+      matrix_file_path = args.argv[i+1]
+    elseif c.strcmp(args.argv[i], "-s") == 0 then
+      separator_file = args.argv[i+1]
+    elseif c.strcmp(args.argv[i], "-c") == 0 then
+      clusters_file = args.argv[i+1]
+    elseif c.strcmp(args.argv[i], "-m") == 0 then
+      factor_file = args.argv[i+1]
+    elseif c.strcmp(args.argv[i], "-p") == 0 then
+      permuted_matrix_file = args.argv[i+1]
+    elseif c.strcmp(args.argv[i], "-o") == 0 then
+      solution_file = args.argv[i+1]
+    elseif c.strcmp(args.argv[i], "-b") == 0 then
+      b_file = args.argv[i+1]
+    end
+  end
+
+  var matrix_file = c.fopen(matrix_file_path, 'r')
 
   var banner = read_matrix_banner(matrix_file)
   c.printf("M: %d N: %d nz: %d typecode: %s\n", banner.M, banner.N, banner.NZ, banner.typecode)
@@ -504,7 +520,7 @@ task main()
                    grandpar_level,
                    sep, grandpar_sep,
                    sep, par_sep,
-                   grandpar_sep, par_sep,
+                   par_sep, grandpar_sep,
                    sizeA.x, sizeA.y, A.bounds.lo.x, A.bounds.lo.y, A.bounds.hi.x, A.bounds.hi.y,
                    sizeB.x, sizeB.y, B.bounds.lo.x, B.bounds.lo.y, B.bounds.hi.x, B.bounds.hi.y,
                    sizeC.x, sizeC.y, C.bounds.lo.x, C.bounds.lo.y, C.bounds.hi.x, C.bounds.hi.y)
@@ -520,7 +536,7 @@ task main()
           var A_coloring = c.legion_domain_point_coloring_create()
 
           c.printf("\t\tPartitioning A=(%d, %d) Cluster: %d Rows: %d Cols: %d\n",
-                   grandpar_sep, sep, interval, row_cluster_size-1, col_cluster_size-1)
+                   sep, grandpar_sep, interval, row_cluster_size-1, col_cluster_size-1)
 
           for row = 1, row_cluster_size do
 
@@ -576,7 +592,8 @@ task main()
 
           var B_coloring = c.legion_domain_point_coloring_create()
 
-          c.printf("\t\tPartitioning B=(%d, %d) Cluster: %d Rows: %d Cols: %d\n", sep, par_sep, interval, row_cluster_size-1, col_cluster_size-1)
+          c.printf("\t\tPartitioning B=(%d, %d) Cluster: %d Rows: %d Cols: %d\n",
+                   sep, par_sep, interval, row_cluster_size-1, col_cluster_size-1)
 
           for row = 1, row_cluster_size do
 
@@ -632,7 +649,7 @@ task main()
           var C_coloring = c.legion_domain_point_coloring_create()
 
           c.printf("\t\tPartitioning C=(%d, %d) Cluster: %d Rows: %d Cols: %d\n",
-                   grandpar_sep, par_sep, interval, row_cluster_size-1, col_cluster_size-1)
+                   par_sep, grandpar_sep, interval, row_cluster_size-1, col_cluster_size-1)
 
           for row = 1, row_cluster_size do
 
@@ -735,7 +752,7 @@ task main()
           end
 
           -- write_blocks(mat, mat_part, grandpar_level,
-          --              int2d{sep, grandpar_sep}, int2d{sep, par_sep}, int2d{grandpar_sep, par_sep}, "GEMM", banner)
+          --              int2d{sep, grandpar_sep}, int2d{sep, par_sep}, int2d{par_sep, grandpar_sep}, "GEMM", banner)
 
           c.printf("\n")
 
@@ -749,8 +766,14 @@ task main()
     interval += 1
   end
 
-  c.printf("saving factored matrix\n\n")
-  write_matrix(mat, mat_part, "steps/factored_matrix.mtx", banner)
+  if c.strcmp(factor_file, '') ~= 0 then
+    c.printf("saving factored matrix to: %s\n\n", factor_file)
+    write_matrix(mat, mat_part, factor_file, banner)
+  end
+
+  if c.strcmp(b_file, '') == 0 then
+    c.exit(0)
+  end
 
   var Bentries = read_b(b_file, banner.N)
   var B = region(ispace(int1d, banner.N), double)
@@ -794,7 +817,14 @@ task main()
       var pivot = mat_part[{sep, sep}]
       var bp = Bpart[sep]
 
-      c.printf("Level: %d TRSV A=(%d, %d) B=(%d)\n", level, sep, sep, sep)
+      var sizeA = pivot.bounds.hi - pivot.bounds.lo + {1, 1}
+      var sizeB = bp.bounds.hi - bp.bounds.lo + 1
+
+      c.printf("Level: %d TRSV A=(%d, %d) B=(%d)\nSizeA: %dx%d Lo: %d %d Hi: %d %d SizeB: %d Lo: %d Hi: %d\n\n",
+               level, sep, sep, sep,
+               sizeA.x, sizeA.y, pivot.bounds.lo.x, pivot.bounds.lo.y, pivot.bounds.hi.x, pivot.bounds.hi.y,
+               sizeB, bp.bounds.lo, bp.bounds.hi)
+
       dtrsv(pivot, bp, cblas.CblasLower, cblas.CblasNoTrans)
 
       var par_idx = sep_idx
@@ -802,30 +832,64 @@ task main()
         par_idx = par_idx/2
         var par_sep = tree[par_level][par_idx]
 
-        c.printf("\tLevel: %d GEMV A=(%d, %d) X=(%d) Y=(%d)\n", level, sep, par_sep, sep, par_sep)
-        dgemv(mat_part[{sep, par_sep}], Bpart[sep], Bpart[par_sep], cblas.CblasNoTrans)
+        var A = mat_part[{sep, par_sep}]
+        var sizeA = A.bounds.hi - A.bounds.lo + {1, 1}
+        var X = Bpart[sep]
+        var sizeX = X.bounds.hi - X.bounds.lo + 1
+        var Y = Bpart[par_sep]
+        var sizeY = Y.bounds.hi - Y.bounds.lo + 1
+
+        c.printf("\tLevel: %d GEMV A=(%d, %d) X=(%d) Y=(%d)\n\tSizeA: %dx%d Lo: %d %d Hi: %d %d SizeX: %d Lo: %d Hi: %d SizeY: %d Lo: %d Hi: %d\n\n",
+                 par_level, sep, par_sep, sep, par_sep,
+                 sizeA.x, sizeA.y, A.bounds.lo.x, A.bounds.lo.y, A.bounds.hi.x, A.bounds.hi.y,
+                 sizeX, X.bounds.lo, X.bounds.hi,
+                 sizeY, Y.bounds.lo, Y.bounds.hi)
+
+        dgemv(A, X, Y, cblas.CblasNoTrans)
       end
     end
   end
 
-  c.printf("\nBackward Substitution\n")
+  c.printf("Backward Substitution\n")
   for par_level = 0, levels do
     for par_idx = 0, [int](math.pow(2, par_level)) do
       var par_sep = tree[par_level][par_idx]
       var pivot = mat_part[{par_sep, par_sep}]
       var bp = Bpart[par_sep]
 
-      c.printf("Level: %d TRSV A=(%d, %d) B=(%d)\n", par_level, par_sep, par_sep, par_sep)
+      var sizeA = pivot.bounds.hi - pivot.bounds.lo + {1, 1}
+      var sizeB = bp.bounds.hi - bp.bounds.lo + {1, 1}
+
+      c.printf("Level: %d TRSV A=(%d, %d) B=(%d)\nSizeA: %dx%d Lo: %d %d Hi: %d %d SizeB: %d Lo: %d Hi: %d\n\n",
+               par_level, par_sep, par_sep, par_sep,
+               sizeA.x, sizeA.y, pivot.bounds.lo.x, pivot.bounds.lo.y, pivot.bounds.hi.x, pivot.bounds.hi.y,
+               sizeB, bp.bounds.lo, bp.bounds.hi)
+
       dtrsv(pivot, bp, cblas.CblasLower, cblas.CblasTrans)
 
       for level = par_level+1, levels do
         for sep_idx = [int](math.pow(2, level))-1, -1, -1 do
           var sep = tree[level][sep_idx]
-          c.printf("\tLevel: %d GEMV A=(%d, %d) X=(%d) Y=(%d)\n", par_level, sep, par_sep, par_sep, sep)
-          dgemv(mat_part[{sep, par_sep}], Bpart[par_sep], Bpart[sep], cblas.CblasTrans)
+
+          var A = mat_part[{sep, par_sep}]
+          var sizeA = A.bounds.hi - A.bounds.lo + {1, 1}
+          var X = Bpart[par_sep]
+          var sizeX = X.bounds.hi - X.bounds.lo + 1
+          var Y = Bpart[sep]
+          var sizeY = Y.bounds.hi - Y.bounds.lo + 1
+
+          var vol = c.legion_domain_get_volume(c.legion_domain_from_rect_2d(A.bounds))
+          if vol ~= 0 then
+            c.printf("\tLevel: %d GEMV A=(%d, %d) X=(%d) Y=(%d)\n\tSizeA: %dx%d Lo: %d %d Hi: %d %d SizeX: %d Lo: %d Hi: %d SizeY: %d Lo: %d Hi: %d\n\n",
+                     level, sep, par_sep, par_sep, sep,
+                     sizeA.x, sizeA.y, A.bounds.lo.x, A.bounds.lo.y, A.bounds.hi.x, A.bounds.hi.y,
+                     sizeX, X.bounds.lo, X.bounds.hi,
+                     sizeY, Y.bounds.lo, Y.bounds.hi)
+
+            dgemv(A, X, Y, cblas.CblasTrans)
+          end
         end
       end
-
     end
   end
 
@@ -839,13 +903,16 @@ task main()
     end
   end
 
-  var solution = c.fopen('solution.mtx', 'w')
+  if c.strcmp(solution_file, '') ~= 0 then
+    c.printf("Saving solution to: %s\n", solution_file)
+    var solution = c.fopen(solution_file, 'w')
 
-  for i = 0, banner.N do
-    c.fprintf(solution, "%0.5g\n", X[i])
+    for i = 0, banner.N do
+      c.fprintf(solution, "%0.5g\n", X[i])
+    end
+
+    c.fclose(solution)
   end
-
-  c.fclose(solution)
 
   c.fclose(matrix_file)
   c.free(matrix_entries)

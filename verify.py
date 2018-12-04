@@ -89,17 +89,6 @@ def verify(line, mat, bounds):
         assert(np.allclose(mat, output, rtol=1e-04, atol=1e-04))
     except AssertionError as ex:
         diff = mat - output
-        # for block, bound in bounds.items():
-        #     row, col = bound
-        #     print("Python", block, ':')
-        #     print_matrix(mat[row, col])
-        #     print()
-        #     print("Regent", block, ':')
-        #     print_matrix(output[row, col])
-        #     print()
-        #     print("Diff", block, ':')
-        #     print_matrix(diff[row, col])
-        #     print()
         print("Python:")
         print_matrix(mat)
         print()
@@ -111,34 +100,56 @@ def verify(line, mat, bounds):
         raise ex
 
 
-mat = scipy.io.mmread("steps/permuted_matrix.mtx")
-mat = mat.toarray()
-mat = np.tril(mat)
+def debug():
+    mat = scipy.io.mmread("steps/permuted_matrix.mtx")
+    mat = mat.toarray()
+    mat = np.tril(mat)
 
-omat = scipy.io.mmread("steps/permuted_matrix.mtx")
-omat = omat.toarray()
-omat = np.tril(omat)
+    omat = scipy.io.mmread("steps/permuted_matrix.mtx")
+    omat = omat.toarray()
+    omat = np.tril(omat)
 
-cholesky_numpy = scipy.linalg.cholesky(omat, lower=True)
+    cholesky_numpy = scipy.linalg.cholesky(omat, lower=True)
 
-cholesky_regent = scipy.io.mmread("steps/factored_matrix.mtx")
-cholesky_regent = cholesky_regent.toarray()
-cholesky_regent = np.tril(cholesky_regent)
+    cholesky_regent = scipy.io.mmread("steps/factored_matrix.mtx")
+    cholesky_regent = cholesky_regent.toarray()
+    cholesky_regent = np.tril(cholesky_regent)
 
-with open('output', 'r') as f:
-    for line in f:
-        line = line.lstrip().rstrip()
-        if line.startswith("Level"):
-            op_line = line
-            if "POTRF" in line:
-                operation = potrf
-            elif "TRSM" in line:
-                operation = trsm
-            elif "GEMM" in line:
-                operation = gemm
-        elif line.startswith("Size"):
-            bounds = compute_bounds(line)
-            operation(mat, bounds)
-            verify(op_line, mat, bounds)
+    with open('output', 'r') as f:
+        for line in f:
+            line = line.lstrip().rstrip()
+            if line.startswith("Level"):
+                op_line = line
+                if "POTRF" in line:
+                    operation = potrf
+                elif "TRSM" in line:
+                    operation = trsm
+                elif "GEMM" in line:
+                    operation = gemm
+            elif line.startswith("Size"):
+                bounds = compute_bounds(line)
+                operation(mat, bounds)
+                verify(op_line, mat, bounds)
 
-np.allclose(cholesky_numpy, cholesky_regent, rtol=1e-04, atol=1e-04)
+    print(np.allclose(cholesky_numpy, cholesky_regent, rtol=1e-04, atol=1e-04))
+
+
+def check_solution(A, b, solution_regent):
+    A = scipy.io.mmread(A)
+    A = A.toarray()
+
+    b = scipy.io.mmread(b)
+
+    solution_regent = np.genfromtxt(solution_regent)
+    solution_regent.reshape(b)
+
+    solution_numpy = scipy.linalg.solve(A, b)
+
+    print(np.allclose(solution_numpy, solution_regent, rtol=1e-04, atol=1e-04))
+
+
+def generate_b(n):
+    np.random.seed()
+    a = np.random.randint(1, 11, size=(n, 1))
+    scipy.io.mmwrite("B_%dx1.mtx" % n, a)
+
