@@ -413,7 +413,7 @@ task main()
                pivot.bounds.lo.x, pivot.bounds.lo.y, pivot.bounds.hi.x, pivot.bounds.hi.y)
       dpotrf(pivot)
 
-      --write_blocks(mat, mat_part, level, int2d{sep, sep}, int2d{0, 0}, int2d{0, 0}, "POTRF", banner)
+      -- write_blocks(mat, mat_part, level, int2d{sep, sep}, int2d{0, 0}, int2d{0, 0}, "POTRF", banner)
 
       -- we should make an empty partition and accumulate the partitions we make during the TRSM by taking the union
       -- so we can reuse them when we do the GEMM, but right now we just partition twice
@@ -495,7 +495,7 @@ task main()
           dtrsm(pivot, part)
         end
 
-        --write_blocks(mat, mat_part, par_level, int2d{sep, sep}, int2d{sep, par_sep}, int2d{0, 0}, "TRSM", banner)
+        -- write_blocks(mat, mat_part, par_level, int2d{sep, sep}, int2d{sep, par_sep}, int2d{0, 0}, "TRSM", banner)
 
         c.printf("\n")
       end
@@ -820,7 +820,7 @@ task main()
       var sizeA = pivot.bounds.hi - pivot.bounds.lo + {1, 1}
       var sizeB = bp.bounds.hi - bp.bounds.lo + 1
 
-      c.printf("Level: %d TRSV A=(%d, %d) B=(%d)\nSizeA: %dx%d Lo: %d %d Hi: %d %d SizeB: %d Lo: %d Hi: %d\n\n",
+      c.printf("Level: %d TRSV A=(%d, %d) B=(%d)\nSizeA: %dx%d Lo: %d %d Hi: %d %d SizeB: %d Lo: %d 1 Hi: %d 1\n\n",
                level, sep, sep, sep,
                sizeA.x, sizeA.y, pivot.bounds.lo.x, pivot.bounds.lo.y, pivot.bounds.hi.x, pivot.bounds.hi.y,
                sizeB, bp.bounds.lo, bp.bounds.hi)
@@ -839,7 +839,7 @@ task main()
         var Y = Bpart[par_sep]
         var sizeY = Y.bounds.hi - Y.bounds.lo + 1
 
-        c.printf("\tLevel: %d GEMV A=(%d, %d) X=(%d) Y=(%d)\n\tSizeA: %dx%d Lo: %d %d Hi: %d %d SizeX: %d Lo: %d Hi: %d SizeY: %d Lo: %d Hi: %d\n\n",
+        c.printf("\tLevel: %d GEMV A=(%d, %d) X=(%d) Y=(%d)\n\tSizeA: %dx%d Lo: %d %d Hi: %d %d SizeX: %d Lo: %d 1 Hi: %d 1 SizeY: %d Lo: %d 1 Hi: %d 1\n\n",
                  par_level, sep, par_sep, sep, par_sep,
                  sizeA.x, sizeA.y, A.bounds.lo.x, A.bounds.lo.y, A.bounds.hi.x, A.bounds.hi.y,
                  sizeX, X.bounds.lo, X.bounds.hi,
@@ -860,7 +860,7 @@ task main()
       var sizeA = pivot.bounds.hi - pivot.bounds.lo + {1, 1}
       var sizeB = bp.bounds.hi - bp.bounds.lo + {1, 1}
 
-      c.printf("Level: %d TRSV A=(%d, %d) B=(%d)\nSizeA: %dx%d Lo: %d %d Hi: %d %d SizeB: %d Lo: %d Hi: %d\n\n",
+      c.printf("Level: %d TRSV A=(%d, %d) B=(%d)\nSizeA: %dx%d Lo: %d %d Hi: %d %d SizeB: %d Lo: %d 1 Hi: %d 1\n\n",
                par_level, par_sep, par_sep, par_sep,
                sizeA.x, sizeA.y, pivot.bounds.lo.x, pivot.bounds.lo.y, pivot.bounds.hi.x, pivot.bounds.hi.y,
                sizeB, bp.bounds.lo, bp.bounds.hi)
@@ -880,7 +880,7 @@ task main()
 
           var vol = c.legion_domain_get_volume(c.legion_domain_from_rect_2d(A.bounds))
           if vol ~= 0 then
-            c.printf("\tLevel: %d GEMV A=(%d, %d) X=(%d) Y=(%d)\n\tSizeA: %dx%d Lo: %d %d Hi: %d %d SizeX: %d Lo: %d Hi: %d SizeY: %d Lo: %d Hi: %d\n\n",
+            c.printf("\tLevel: %d GEMV A=(%d, %d) X=(%d) Y=(%d)\n\tSizeA: %dx%d Lo: %d %d Hi: %d %d SizeX: %d Lo: %d 1 Hi: %d 1 SizeY: %d Lo: %d 1 Hi: %d 1\n\n",
                      level, sep, par_sep, par_sep, sep,
                      sizeA.x, sizeA.y, A.bounds.lo.x, A.bounds.lo.y, A.bounds.hi.x, A.bounds.hi.y,
                      sizeX, X.bounds.lo, X.bounds.hi,
