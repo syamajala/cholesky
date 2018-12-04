@@ -3,6 +3,7 @@ import scipy.linalg
 import scipy.io
 import numpy as np
 import re
+import os
 import itertools as it
 
 
@@ -58,7 +59,7 @@ def compute_bounds(line):
     return bounds
 
 
-def find_file(line):
+def find_file(line, directory=""):
 
     lvl = re.findall(r'Level: \d+', line)[0]
     lvl = int(line.split(" ")[1])
@@ -75,12 +76,12 @@ def find_file(line):
     elif "GEMM" in line:
         op = "gemm_lvl%d_a%d%d_b%d%d_c%d%d.mtx" % (lvl, *blocks)
 
-    return 'steps/%s' % op
+    return os.path.join(directory, op)
 
 
-def verify(line, mat, bounds):
+def verify(line, mat, bounds, directory=""):
     print("Verifying:", line)
-    output_file = find_file(line)
+    output_file = find_file(line, directory)
     output = scipy.io.mmread(output_file)
     output = output.toarray()
     output = np.tril(output)
@@ -100,22 +101,26 @@ def verify(line, mat, bounds):
         raise ex
 
 
-def debug():
-    mat = scipy.io.mmread("steps/permuted_matrix.mtx")
+def debug(permuted_mat, factored_mat, output, directory=""):
+    permuted_mat = os.path.join(directory, permuted_mat)
+    factored_mat = os.path.join(directory, factored_mat)
+    output = os.path.join(directory, output)
+
+    mat = scipy.io.mmread(permuted_mat)
     mat = mat.toarray()
     mat = np.tril(mat)
 
-    omat = scipy.io.mmread("steps/permuted_matrix.mtx")
+    omat = scipy.io.mmread(permuted_mat)
     omat = omat.toarray()
     omat = np.tril(omat)
 
     cholesky_numpy = scipy.linalg.cholesky(omat, lower=True)
 
-    cholesky_regent = scipy.io.mmread("steps/factored_matrix.mtx")
+    cholesky_regent = scipy.io.mmread(factored_mat)
     cholesky_regent = cholesky_regent.toarray()
     cholesky_regent = np.tril(cholesky_regent)
 
-    with open('output', 'r') as f:
+    with open(output, 'r') as f:
         for line in f:
             line = line.lstrip().rstrip()
             if line.startswith("Level"):
@@ -126,10 +131,27 @@ def debug():
                     operation = trsm
                 elif "GEMM" in line:
                     operation = gemm
+                else:
+                    operation = None
             elif line.startswith("Size"):
-                bounds = compute_bounds(line)
-                operation(mat, bounds)
-                verify(op_line, mat, bounds)
+                if operation:
+                    bounds = compute_bounds(line)
+                    operation(mat, bounds)
+                    verify(op_line, mat, bounds, directory)
+
+    print(np.allclose(cholesky_numpy, cholesky_regent, rtol=1e-04, atol=1e-04))
+
+
+def check_matrix(permuted_mat, factored_mat):
+    mat = scipy.io.mmread(permuted_mat)
+    mat = mat.toarray()
+    mat = np.tril(mat)
+
+    cholesky_numpy = scipy.linalg.cholesky(mat, lower=True)
+
+    cholesky_regent = scipy.io.mmread(factored_mat)
+    cholesky_regent = cholesky_regent.toarray()
+    cholesky_regent = np.tril(cholesky_regent)
 
     print(np.allclose(cholesky_numpy, cholesky_regent, rtol=1e-04, atol=1e-04))
 
@@ -141,11 +163,15 @@ def check_solution(A, b, solution_regent):
     b = scipy.io.mmread(b)
 
     solution_regent = np.genfromtxt(solution_regent)
-    solution_regent.reshape(b)
+    solution_regent = solution_regent.reshape(b.shape)
 
     solution_numpy = scipy.linalg.solve(A, b)
 
-    print(np.allclose(solution_numpy, solution_regent, rtol=1e-04, atol=1e-04))
+    res = np.allclose(solution_numpy, solution_regent, rtol=1e-04, atol=1e-04)
+    print(res)
+    if not res:
+        diff = solution_numpy - solution_regent
+        print(diff)
 
 
 def generate_b(n):

@@ -71,7 +71,7 @@ end
 
 task dtrsm(rA : region(ispace(int2d), double),
            rB : region(ispace(int2d), double))
-where reads writes(rA), reads(rB)
+where reads(rA), reads writes(rB)
 do
   var rectA = rA.bounds
   var rectB = rB.bounds
@@ -218,7 +218,7 @@ task dgemv(rA : region(ispace(int2d), double),
            rX : region(ispace(int1d), double),
            rY : region(ispace(int1d), double),
           trans:int)
-where reads(rA), reads writes(rX, rY)
+where reads(rA, rX), reads writes(rY)
 do
   var rectA = rA.bounds
   var sizeA:int2d = rectA.hi - rectA.lo + {1, 1}
