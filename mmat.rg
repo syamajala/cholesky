@@ -83,7 +83,6 @@ terra read_b(file:rawstring, n:int)
   return entries
 end
 
-
 task write_matrix(mat: region(ispace(int2d), double),
                   mat_part: partition(disjoint, mat, ispace(int2d)),
                   file:regentlib.string,
@@ -816,22 +815,15 @@ task main()
       var pivot = mat_part[{par_sep, par_sep}]
       var bp = Bpart[par_sep]
 
+      c.printf("Level: %d TRSV A=(%d, %d) B=(%d)\n", par_level, par_sep, par_sep, par_sep)
+      dtrsv(pivot, bp, cblas.CblasLower, cblas.CblasTrans)
+
       for level = par_level+1, levels do
         for sep_idx = [int](math.pow(2, level))-1, -1, -1 do
           var sep = tree[level][sep_idx]
-          c.printf("Level: %d GEMV A=(%d, %d) X=(%d) Y=(%d)\n", par_level, sep, par_sep, par_sep, sep)
+          c.printf("\tLevel: %d GEMV A=(%d, %d) X=(%d) Y=(%d)\n", par_level, sep, par_sep, par_sep, sep)
           dgemv(mat_part[{sep, par_sep}], Bpart[par_sep], Bpart[sep], cblas.CblasTrans)
-          for i = 0, banner.N do
-            c.printf("%f\n", B[i])
-          end
-
         end
-      end
-
-      c.printf("Level: %d TRSV A=(%d, %d) B=(%d)\n", par_level, par_sep, par_sep, par_sep)
-      dtrsv(pivot, bp, cblas.CblasLower, cblas.CblasTrans)
-      for i = 0, banner.N do
-            c.printf("%f\n", B[i])
       end
 
     end
@@ -846,6 +838,14 @@ task main()
       j += 1
     end
   end
+
+  var solution = c.fopen('solution.mtx', 'w')
+
+  for i = 0, banner.N do
+    c.fprintf(solution, "%0.5g\n", X[i])
+  end
+
+  c.fclose(solution)
 
   c.fclose(matrix_file)
   c.free(matrix_entries)
