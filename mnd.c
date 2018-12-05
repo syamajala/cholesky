@@ -4,7 +4,7 @@
 #include <math.h>
 
 
-int*** read_clusters(char *file, size_t len)
+int*** read_clusters(char *file, int num_separators, int max_intervals, int max_interval_size)
 {
   // clusters[separator][interval][dof] = dof of permuted matrix
 
@@ -12,54 +12,54 @@ int*** read_clusters(char *file, size_t len)
   ssize_t read = 0;
   int i = 0;
   FILE *fp = fopen(file, "r");
-  int ***clusters = NULL;
 
-  while ((read = getline(&line, &len, fp)) != -1) {
+  int ***clusters = (int ***)malloc(num_separators*sizeof(int**));
+  for(int i = 0; i < num_separators; i++)
+  {
+    clusters[i] = (int **)malloc(max_intervals*sizeof(int *));
+    for(int j = 0; j < max_intervals; j++)
+    {
+      clusters[i][j] = (int *)malloc(max_interval_size*sizeof(int));
+    }
+  }
+
+  while ((read = getline(&line, &max_interval_size, fp)) != -1) {
     if (i == 0)
     {
-      int num_separators = atoi(&(line[1]));
-
-      clusters = (int ***)malloc((num_separators+1) * sizeof(int **));
-      clusters[0] = (int **)malloc(sizeof(int*));
-      clusters[0][0] = (int *)malloc((num_separators+1) * sizeof(int)); // num of intervals/separator
-
       i++;
       continue;
     }
 
-    int temp_row[len][len];
-    int interval_sizes[len];
+    int interval_sizes[max_interval_size];
     char *rows = strtok(line, ";");
     int separator = atoi(&rows[0])+1;
     int interval = 0;
-    int dofs = 0;
+    int dofs = 1;
     rows = strtok(NULL, ";,");
     while(rows != NULL)
     {
       int row = atoi(&rows[0]);
-      temp_row[interval][dofs] = row;
+      clusters[separator][interval][dofs] = row;
       dofs++;
       rows = strtok(NULL, ";,");
       if(rows == NULL)
       {
-        dofs--;
+        dofs -= 2;
         interval_sizes[interval] = dofs;
         interval++;
         clusters[0][0][separator] = interval;
-        clusters[separator] = (int **)malloc(interval*sizeof(int*));
-        for(int i = 0; i < interval; i++)
+
+        for(int j = 0; j < interval; j++)
         {
-          int interval_size = interval_sizes[i];
-          clusters[separator][i] = (int *)malloc(interval_size * sizeof(int));
-          memcpy(&(clusters[separator][i][1]), temp_row[i], interval_size*sizeof(int));
-          clusters[separator][i][0] = interval_size;
+          int interval_size = interval_sizes[j];
+          clusters[separator][j][0] = interval_size;
         }
       }
       else if (strcmp("0", rows) == 0)
       {
-        interval_sizes[interval] = dofs;
+        interval_sizes[interval] = dofs-1;
         interval++;
-        dofs = 0;
+        dofs = 1;
       }
     }
     i++;
