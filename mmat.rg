@@ -1,3 +1,17 @@
+-- Copyright 2018 Stanford University
+--
+-- Licensed under the Apache License, Version 2.0 (the "License");
+-- you may not use this file except in compliance with the License.
+-- You may obtain a copy of the License at
+--
+--     http://www.apache.org/licenses/LICENSE-2.0
+--
+-- Unless required by applicable law or agreed to in writing, software
+-- distributed under the License is distributed on an "AS IS" BASIS,
+-- WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+-- See the License for the specific language governing permissions and
+-- limitations under the License.
+
 import "regent"
 local c = regentlib.c
 terralib.includepath = terralib.includepath .. ";."
@@ -301,12 +315,12 @@ task main()
 
       separator_bounds[sep] = bounds
 
-      c.printf("level: %d sep: %d size: %d ", level, sep, size)
-      c.printf("prev_size: %d %d bounds.lo: %d %d, bounds.hi: %d %d vol: %d\n",
-               prev_size.x, prev_size.y,
-               bounds.lo.x, bounds.lo.y,
-               bounds.hi.x, bounds.hi.y,
-               c.legion_domain_get_volume(c.legion_domain_from_rect_2d(bounds)))
+      -- c.printf("level: %d sep: %d size: %d ", level, sep, size)
+      -- c.printf("prev_size: %d %d bounds.lo: %d %d, bounds.hi: %d %d vol: %d\n",
+      --          prev_size.x, prev_size.y,
+      --          bounds.lo.x, bounds.lo.y,
+      --          bounds.hi.x, bounds.hi.y,
+      --          c.legion_domain_get_volume(c.legion_domain_from_rect_2d(bounds)))
 
       var color:int2d = {x = sep, y = sep}
       c.legion_domain_point_coloring_color_domain(coloring, color:to_domain_point(), c.legion_domain_from_rect_2d(bounds))
@@ -322,8 +336,8 @@ task main()
         var child_bounds = rect2d{ {x = par_bounds.lo.x, y = bounds.lo.y},
                                    {x = par_bounds.hi.x, y = bounds.hi.y } }
 
-        c.printf("block: %d %d bounds.lo: %d %d bounds.hi: %d %d\n", sep, par_sep,
-                 child_bounds.lo.x, child_bounds.lo.y, child_bounds.hi.x, child_bounds.hi.y)
+        -- c.printf("block: %d %d bounds.lo: %d %d bounds.hi: %d %d\n", sep, par_sep,
+        --          child_bounds.lo.x, child_bounds.lo.y, child_bounds.hi.x, child_bounds.hi.y)
 
         var color:int2d = {sep, par_sep}
         c.legion_domain_point_coloring_color_domain(coloring, color:to_domain_point(), c.legion_domain_from_rect_2d(child_bounds))
@@ -396,8 +410,10 @@ task main()
     end
   end
 
-  c.printf("saving permuted matrix\n")
-  write_matrix(mat, mat_part, "steps/permuted_matrix.mtx", banner)
+  if c.strcmp(permuted_matrix_file, '') ~= 0 then
+    c.printf("saving permuted matrix to %s\n", permuted_matrix_file)
+    write_matrix(mat, mat_part, permuted_matrix_file, banner)
+  end
 
   c.printf("done fill: %d %d\n", nz, banner.NZ)
 
@@ -408,9 +424,9 @@ task main()
       var sep = tree[level][sep_idx]
       var pivot = mat_part[{sep, sep}]
       var sizeA = pivot.bounds.hi - pivot.bounds.lo + {1, 1}
-      c.printf("Level: %d POTRF A=(%d, %d)\nSize: %dx%d Lo: %d %d Hi: %d %d\n\n",
-               level, sep, sep, sizeA.x, sizeA.y,
-               pivot.bounds.lo.x, pivot.bounds.lo.y, pivot.bounds.hi.x, pivot.bounds.hi.y)
+      -- c.printf("Level: %d POTRF A=(%d, %d)\nSize: %dx%d Lo: %d %d Hi: %d %d\n\n",
+      --          level, sep, sep, sizeA.x, sizeA.y,
+      --          pivot.bounds.lo.x, pivot.bounds.lo.y, pivot.bounds.hi.x, pivot.bounds.hi.y)
       dpotrf(pivot)
 
       -- write_blocks(mat, mat_part, level, int2d{sep, sep}, int2d{0, 0}, int2d{0, 0}, "POTRF", banner)
@@ -426,10 +442,10 @@ task main()
         var off_diag = mat_part[{sep, par_sep}]
         var sizeB = off_diag.bounds.hi - off_diag.bounds.lo + {1, 1}
 
-        c.printf("\tLevel: %d TRSM A=(%d, %d) B=(%d, %d)\n\tSizeA: %dx%d Lo: %d %d Hi: %d %d SizeB: %dx%d Lo: %d %d Hi: %d %d\n\n",
-                 par_level, sep, sep, sep, par_sep,
-                 sizeA.x, sizeA.y, pivot.bounds.lo.x, pivot.bounds.lo.y, pivot.bounds.hi.x, pivot.bounds.hi.y,
-                 sizeB.x, sizeB.y, off_diag.bounds.lo.x, off_diag.bounds.lo.y, off_diag.bounds.hi.x, off_diag.bounds.hi.y)
+        -- c.printf("\tLevel: %d TRSM A=(%d, %d) B=(%d, %d)\n\tSizeA: %dx%d Lo: %d %d Hi: %d %d SizeB: %dx%d Lo: %d %d Hi: %d %d\n\n",
+        --          par_level, sep, sep, sep, par_sep,
+        --          sizeA.x, sizeA.y, pivot.bounds.lo.x, pivot.bounds.lo.y, pivot.bounds.hi.x, pivot.bounds.hi.y,
+        --          sizeB.x, sizeB.y, off_diag.bounds.lo.x, off_diag.bounds.lo.y, off_diag.bounds.hi.x, off_diag.bounds.hi.y)
 
         var row_cluster = clusters[par_sep][interval]
         var row_cluster_size = row_cluster[0]
@@ -440,8 +456,8 @@ task main()
 
         var off_diag_coloring = c.legion_domain_point_coloring_create()
 
-        c.printf("\t\tPartitioning B=(%d, %d) Cluster: %d Rows: %d Cols: %d\n",
-                 sep, par_sep, interval, row_cluster_size-1, col_cluster_size-1)
+        -- c.printf("\t\tPartitioning B=(%d, %d) Cluster: %d Rows: %d Cols: %d\n",
+        --          sep, par_sep, interval, row_cluster_size-1, col_cluster_size-1)
 
         for row = 1, row_cluster_size do
 
@@ -471,17 +487,17 @@ task main()
             c.legion_domain_point_coloring_color_domain(off_diag_coloring, color:to_domain_point(),
                                                         c.legion_domain_from_rect_2d(bounds))
 
-            c.printf("\t\tcolor: %d %d %d bounds.lo: %d %d, bounds.hi: %d %d size: %d %d vol: %d\n",
-                     color.x, color.y, color.z,
-                     bounds.lo.x, bounds.lo.y,
-                     bounds.hi.x, bounds.hi.y,
-                     size.x, size.y,
-                     c.legion_domain_get_volume(c.legion_domain_from_rect_2d(bounds)))
+            -- c.printf("\t\tcolor: %d %d %d bounds.lo: %d %d, bounds.hi: %d %d size: %d %d vol: %d\n",
+            --          color.x, color.y, color.z,
+            --          bounds.lo.x, bounds.lo.y,
+            --          bounds.hi.x, bounds.hi.y,
+            --          size.x, size.y,
+            --          c.legion_domain_get_volume(c.legion_domain_from_rect_2d(bounds)))
 
             prev_lo = prev_lo + int2d{0, bottom-top}
           end
           prev_lo = int2d{prev_lo.x + right-left, off_diag.bounds.lo.y}
-          c.printf("\n")
+          --c.printf("\n")
         end
 
         var off_diag_colors = ispace(int3d, {1, 1, (row_cluster_size-1)*(col_cluster_size-1)}, {sep, par_sep, 0})
@@ -491,13 +507,13 @@ task main()
         for color in off_diag_colors do
           var part = off_diag_part[color]
 
-          c.printf("\t\tTRSM B=(%d, %d, %d) A=(%d, %d)\n", color.x, color.y, color.z, sep, sep)
+          -- c.printf("\t\tTRSM B=(%d, %d, %d) A=(%d, %d)\n", color.x, color.y, color.z, sep, sep)
           dtrsm(pivot, part)
         end
 
         -- write_blocks(mat, mat_part, par_level, int2d{sep, sep}, int2d{sep, par_sep}, int2d{0, 0}, "TRSM", banner)
 
-        c.printf("\n")
+        -- c.printf("\n")
       end
 
       par_idx = sep_idx
@@ -516,14 +532,14 @@ task main()
           var C = mat_part[{par_sep, grandpar_sep}] -- ex: 24, 28
           var sizeC = C.bounds.hi - C.bounds.lo + {1, 1}
 
-          c.printf("\tLevel: %d GEMM A=(%d, %d) B=(%d, %d) C=(%d, %d)\n\tSizeA: %dx%d Lo: %d %d Hi: %d %d SizeB: %dx%d Lo: %d %d Hi: %d %d SizeC: %dx%d Lo: %d %d Hi: %d %d\n\n",
-                   grandpar_level,
-                   sep, grandpar_sep,
-                   sep, par_sep,
-                   par_sep, grandpar_sep,
-                   sizeA.x, sizeA.y, A.bounds.lo.x, A.bounds.lo.y, A.bounds.hi.x, A.bounds.hi.y,
-                   sizeB.x, sizeB.y, B.bounds.lo.x, B.bounds.lo.y, B.bounds.hi.x, B.bounds.hi.y,
-                   sizeC.x, sizeC.y, C.bounds.lo.x, C.bounds.lo.y, C.bounds.hi.x, C.bounds.hi.y)
+          -- c.printf("\tLevel: %d GEMM A=(%d, %d) B=(%d, %d) C=(%d, %d)\n\tSizeA: %dx%d Lo: %d %d Hi: %d %d SizeB: %dx%d Lo: %d %d Hi: %d %d SizeC: %dx%d Lo: %d %d Hi: %d %d\n\n",
+          --          grandpar_level,
+          --          sep, grandpar_sep,
+          --          sep, par_sep,
+          --          par_sep, grandpar_sep,
+          --          sizeA.x, sizeA.y, A.bounds.lo.x, A.bounds.lo.y, A.bounds.hi.x, A.bounds.hi.y,
+          --          sizeB.x, sizeB.y, B.bounds.lo.x, B.bounds.lo.y, B.bounds.hi.x, B.bounds.hi.y,
+          --          sizeC.x, sizeC.y, C.bounds.lo.x, C.bounds.lo.y, C.bounds.hi.x, C.bounds.hi.y)
 
           -- partition A (should be done in TRSM above) ex: 16, 28
           var row_cluster = clusters[grandpar_sep][interval]
@@ -535,8 +551,8 @@ task main()
 
           var A_coloring = c.legion_domain_point_coloring_create()
 
-          c.printf("\t\tPartitioning A=(%d, %d) Cluster: %d Rows: %d Cols: %d\n",
-                   sep, grandpar_sep, interval, row_cluster_size-1, col_cluster_size-1)
+          -- c.printf("\t\tPartitioning A=(%d, %d) Cluster: %d Rows: %d Cols: %d\n",
+          --          sep, grandpar_sep, interval, row_cluster_size-1, col_cluster_size-1)
 
           for row = 1, row_cluster_size do
 
@@ -566,16 +582,16 @@ task main()
               c.legion_domain_point_coloring_color_domain(A_coloring, color:to_domain_point(),
                                                           c.legion_domain_from_rect_2d(bounds))
 
-              c.printf("\t\tcolor: %d %d %d bounds.lo: %d %d, bounds.hi: %d %d size: %d %d vol: %d\n",
-                       color.x, color.y, color.z,
-                       bounds.lo.x, bounds.lo.y,
-                       bounds.hi.x, bounds.hi.y,
-                       size.x, size.y,
-                       c.legion_domain_get_volume(c.legion_domain_from_rect_2d(bounds)))
+              -- c.printf("\t\tcolor: %d %d %d bounds.lo: %d %d, bounds.hi: %d %d size: %d %d vol: %d\n",
+              --          color.x, color.y, color.z,
+              --          bounds.lo.x, bounds.lo.y,
+              --          bounds.hi.x, bounds.hi.y,
+              --          size.x, size.y,
+              --          c.legion_domain_get_volume(c.legion_domain_from_rect_2d(bounds)))
               prev_lo = prev_lo + int2d{0, bottom-top}
             end
             prev_lo = int2d{prev_lo.x + right-left, A.bounds.lo.y}
-            c.printf("\n")
+            -- c.printf("\n")
           end
 
           var A_colors = ispace(int3d, {1, 1, (row_cluster_size-1)*(col_cluster_size-1)}, {sep, grandpar_sep, 0})
@@ -592,8 +608,8 @@ task main()
 
           var B_coloring = c.legion_domain_point_coloring_create()
 
-          c.printf("\t\tPartitioning B=(%d, %d) Cluster: %d Rows: %d Cols: %d\n",
-                   sep, par_sep, interval, row_cluster_size-1, col_cluster_size-1)
+          -- c.printf("\t\tPartitioning B=(%d, %d) Cluster: %d Rows: %d Cols: %d\n",
+          --          sep, par_sep, interval, row_cluster_size-1, col_cluster_size-1)
 
           for row = 1, row_cluster_size do
 
@@ -622,16 +638,16 @@ task main()
               c.legion_domain_point_coloring_color_domain(B_coloring, color:to_domain_point(),
                                                           c.legion_domain_from_rect_2d(bounds))
 
-              c.printf("\t\tcolor: %d %d %d bounds.lo: %d %d, bounds.hi: %d %d size: %d %d vol: %d\n",
-                       color.x, color.y, color.z,
-                       bounds.lo.x, bounds.lo.y,
-                       bounds.hi.x, bounds.hi.y,
-                       size.x, size.y,
-                       c.legion_domain_get_volume(c.legion_domain_from_rect_2d(bounds)))
+              -- c.printf("\t\tcolor: %d %d %d bounds.lo: %d %d, bounds.hi: %d %d size: %d %d vol: %d\n",
+              --          color.x, color.y, color.z,
+              --          bounds.lo.x, bounds.lo.y,
+              --          bounds.hi.x, bounds.hi.y,
+              --          size.x, size.y,
+              --          c.legion_domain_get_volume(c.legion_domain_from_rect_2d(bounds)))
               prev_lo = prev_lo + int2d{0, bottom-top}
             end
             prev_lo = int2d{prev_lo.x + right-left, B.bounds.lo.y}
-            c.printf("\n")
+            --c.printf("\n")
           end
 
           var B_colors = ispace(int3d, {1, 1, (row_cluster_size-1)*(col_cluster_size-1)}, {sep, par_sep, 0})
@@ -648,8 +664,8 @@ task main()
 
           var C_coloring = c.legion_domain_point_coloring_create()
 
-          c.printf("\t\tPartitioning C=(%d, %d) Cluster: %d Rows: %d Cols: %d\n",
-                   par_sep, grandpar_sep, interval, row_cluster_size-1, col_cluster_size-1)
+          -- c.printf("\t\tPartitioning C=(%d, %d) Cluster: %d Rows: %d Cols: %d\n",
+          --          par_sep, grandpar_sep, interval, row_cluster_size-1, col_cluster_size-1)
 
           for row = 1, row_cluster_size do
 
@@ -678,23 +694,23 @@ task main()
               c.legion_domain_point_coloring_color_domain(C_coloring, color:to_domain_point(),
                                                           c.legion_domain_from_rect_2d(bounds))
 
-              c.printf("\t\tcolor: %d %d %d bounds.lo: %d %d, bounds.hi: %d %d size: %d %d vol: %d\n",
-                       color.x, color.y, color.z,
-                       bounds.lo.x, bounds.lo.y,
-                       bounds.hi.x, bounds.hi.y,
-                       size.x, size.y,
-                       c.legion_domain_get_volume(c.legion_domain_from_rect_2d(bounds)))
+              -- c.printf("\t\tcolor: %d %d %d bounds.lo: %d %d, bounds.hi: %d %d size: %d %d vol: %d\n",
+              --          color.x, color.y, color.z,
+              --          bounds.lo.x, bounds.lo.y,
+              --          bounds.hi.x, bounds.hi.y,
+              --          size.x, size.y,
+              --          c.legion_domain_get_volume(c.legion_domain_from_rect_2d(bounds)))
               prev_lo = prev_lo + int2d{0, bottom-top}
             end
             prev_lo = int2d{prev_lo.x + right-left, C.bounds.lo.y}
-            c.printf("\n")
+            -- c.printf("\n")
           end
 
           var C_colors = ispace(int3d, {1, 1, (row_cluster_size-1)*(col_cluster_size-1)}, {par_sep, grandpar_sep, 0})
           var C_part = partition(disjoint, C, C_coloring, C_colors)
           c.legion_domain_point_coloring_destroy(C_coloring)
 
-          c.printf("\t\tA Vol: %d B Vol: %d C Vol: %d\n\n", A_colors.volume, B_colors.volume, C_colors.volume)
+          -- c.printf("\t\tA Vol: %d B Vol: %d C Vol: %d\n\n", A_colors.volume, B_colors.volume, C_colors.volume)
 
           var colors_volume = min(A_colors.volume, min(B_colors.volume, C_colors.volume))
 
@@ -712,18 +728,18 @@ task main()
                 if col < row then
                   var BBlock = A_part[Bcolor]
 
-                  c.printf("\t\tGEMM C=(%d, %d, %d) A=(%d, %d, %d) B=(%d, %d, %d)\n",
-                           Ccolor.x, Ccolor.y, Ccolor.z,
-                           Acolor.x, Acolor.y, Acolor.z,
-                           Bcolor.x, Bcolor.y, Bcolor.z)
+                  -- c.printf("\t\tGEMM C=(%d, %d, %d) A=(%d, %d, %d) B=(%d, %d, %d)\n",
+                  --          Ccolor.x, Ccolor.y, Ccolor.z,
+                  --          Acolor.x, Acolor.y, Acolor.z,
+                  --          Bcolor.x, Bcolor.y, Bcolor.z)
 
                   dgemm(ABlock, BBlock, CBlock)
 
                 elseif col == row then
 
-                  c.printf("\t\tSYRK C=(%d, %d, %d) A=(%d, %d, %d)\n",
-                           Ccolor.x, Ccolor.y, Ccolor.z,
-                           Acolor.x, Acolor.y, Acolor.z)
+                  -- c.printf("\t\tSYRK C=(%d, %d, %d) A=(%d, %d, %d)\n",
+                  --          Ccolor.x, Ccolor.y, Ccolor.z,
+                  --          Acolor.x, Acolor.y, Acolor.z)
                   dsyrk(ABlock, CBlock)
 
                 end
@@ -741,10 +757,10 @@ task main()
                 var Ccolor = int3d{par_sep, grandpar_sep, row*(col_cluster_size-1)+col}
                 var CBlock = C_part[Ccolor]
 
-                c.printf("\t\tGEMM C=(%d, %d, %d) A=(%d, %d, %d) B=(%d, %d, %d)\n",
-                         Ccolor.x, Ccolor.y, Ccolor.z,
-                         Acolor.x, Acolor.y, Acolor.z,
-                         Bcolor.x, Bcolor.y, Bcolor.z)
+                -- c.printf("\t\tGEMM C=(%d, %d, %d) A=(%d, %d, %d) B=(%d, %d, %d)\n",
+                --          Ccolor.x, Ccolor.y, Ccolor.z,
+                --          Acolor.x, Acolor.y, Acolor.z,
+                --          Bcolor.x, Bcolor.y, Bcolor.z)
 
                 dgemm(ABlock, BBlock, CBlock)
               end
@@ -754,17 +770,19 @@ task main()
           -- write_blocks(mat, mat_part, grandpar_level,
           --              int2d{sep, grandpar_sep}, int2d{sep, par_sep}, int2d{par_sep, grandpar_sep}, "GEMM", banner)
 
-          c.printf("\n")
+          -- c.printf("\n")
 
           grandpar_idx = grandpar_idx/2
         end
       end
 
-      c.printf("\n")
+      -- c.printf("\n")
 
     end
     interval += 1
   end
+
+  c.printf("Done factoring.\n")
 
   if c.strcmp(factor_file, '') ~= 0 then
     c.printf("saving factored matrix to: %s\n\n", factor_file)
@@ -784,13 +802,13 @@ task main()
   for sep = 1, num_separators+1 do
     var size = separators[sep][0]
     var bounds = rect1d { Bprev_size, Bprev_size + size - 1}
-    c.printf("Separator: %d Lo: %d Hi: %d Size: %d 1\n", sep, bounds.lo, bounds.hi, bounds.hi - bounds.lo + 1)
+    -- c.printf("Separator: %d Lo: %d Hi: %d Size: %d 1\n", sep, bounds.lo, bounds.hi, bounds.hi - bounds.lo + 1)
     var color:int1d = int1d{ sep }
     c.legion_domain_point_coloring_color_domain(Bcoloring, color:to_domain_point(), c.legion_domain_from_rect_1d(bounds))
     Bprev_size = Bprev_size + size
   end
 
-  c.printf("\n")
+  --c.printf("\n")
 
   var Bcolors = ispace(int1d, num_separators, 1)
   var Bpart = partition(disjoint, B, Bcoloring, Bcolors)
@@ -820,10 +838,10 @@ task main()
       var sizeA = pivot.bounds.hi - pivot.bounds.lo + {1, 1}
       var sizeB = bp.bounds.hi - bp.bounds.lo + 1
 
-      c.printf("Level: %d TRSV A=(%d, %d) B=(%d)\nSizeA: %dx%d Lo: %d %d Hi: %d %d SizeB: %d Lo: %d 1 Hi: %d 1\n\n",
-               level, sep, sep, sep,
-               sizeA.x, sizeA.y, pivot.bounds.lo.x, pivot.bounds.lo.y, pivot.bounds.hi.x, pivot.bounds.hi.y,
-               sizeB, bp.bounds.lo, bp.bounds.hi)
+      -- c.printf("Level: %d TRSV A=(%d, %d) B=(%d)\nSizeA: %dx%d Lo: %d %d Hi: %d %d SizeB: %d Lo: %d 1 Hi: %d 1\n\n",
+      --          level, sep, sep, sep,
+      --          sizeA.x, sizeA.y, pivot.bounds.lo.x, pivot.bounds.lo.y, pivot.bounds.hi.x, pivot.bounds.hi.y,
+      --          sizeB, bp.bounds.lo, bp.bounds.hi)
 
       dtrsv(pivot, bp, cblas.CblasLower, cblas.CblasNoTrans)
 
@@ -839,11 +857,11 @@ task main()
         var Y = Bpart[par_sep]
         var sizeY = Y.bounds.hi - Y.bounds.lo + 1
 
-        c.printf("\tLevel: %d GEMV A=(%d, %d) X=(%d) Y=(%d)\n\tSizeA: %dx%d Lo: %d %d Hi: %d %d SizeX: %d Lo: %d 1 Hi: %d 1 SizeY: %d Lo: %d 1 Hi: %d 1\n\n",
-                 par_level, sep, par_sep, sep, par_sep,
-                 sizeA.x, sizeA.y, A.bounds.lo.x, A.bounds.lo.y, A.bounds.hi.x, A.bounds.hi.y,
-                 sizeX, X.bounds.lo, X.bounds.hi,
-                 sizeY, Y.bounds.lo, Y.bounds.hi)
+        -- c.printf("\tLevel: %d GEMV A=(%d, %d) X=(%d) Y=(%d)\n\tSizeA: %dx%d Lo: %d %d Hi: %d %d SizeX: %d Lo: %d 1 Hi: %d 1 SizeY: %d Lo: %d 1 Hi: %d 1\n\n",
+        --          par_level, sep, par_sep, sep, par_sep,
+        --          sizeA.x, sizeA.y, A.bounds.lo.x, A.bounds.lo.y, A.bounds.hi.x, A.bounds.hi.y,
+        --          sizeX, X.bounds.lo, X.bounds.hi,
+        --          sizeY, Y.bounds.lo, Y.bounds.hi)
 
         dgemv(A, X, Y, cblas.CblasNoTrans)
       end
@@ -860,10 +878,10 @@ task main()
       var sizeA = pivot.bounds.hi - pivot.bounds.lo + {1, 1}
       var sizeB = bp.bounds.hi - bp.bounds.lo + {1, 1}
 
-      c.printf("Level: %d TRSV A=(%d, %d) B=(%d)\nSizeA: %dx%d Lo: %d %d Hi: %d %d SizeB: %d Lo: %d 1 Hi: %d 1\n\n",
-               par_level, par_sep, par_sep, par_sep,
-               sizeA.x, sizeA.y, pivot.bounds.lo.x, pivot.bounds.lo.y, pivot.bounds.hi.x, pivot.bounds.hi.y,
-               sizeB, bp.bounds.lo, bp.bounds.hi)
+      -- c.printf("Level: %d TRSV A=(%d, %d) B=(%d)\nSizeA: %dx%d Lo: %d %d Hi: %d %d SizeB: %d Lo: %d 1 Hi: %d 1\n\n",
+      --          par_level, par_sep, par_sep, par_sep,
+      --          sizeA.x, sizeA.y, pivot.bounds.lo.x, pivot.bounds.lo.y, pivot.bounds.hi.x, pivot.bounds.hi.y,
+      --          sizeB, bp.bounds.lo, bp.bounds.hi)
 
       dtrsv(pivot, bp, cblas.CblasLower, cblas.CblasTrans)
 
@@ -880,11 +898,11 @@ task main()
 
           var vol = c.legion_domain_get_volume(c.legion_domain_from_rect_2d(A.bounds))
           if vol ~= 0 then
-            c.printf("\tLevel: %d GEMV A=(%d, %d) X=(%d) Y=(%d)\n\tSizeA: %dx%d Lo: %d %d Hi: %d %d SizeX: %d Lo: %d 1 Hi: %d 1 SizeY: %d Lo: %d 1 Hi: %d 1\n\n",
-                     level, sep, par_sep, par_sep, sep,
-                     sizeA.x, sizeA.y, A.bounds.lo.x, A.bounds.lo.y, A.bounds.hi.x, A.bounds.hi.y,
-                     sizeX, X.bounds.lo, X.bounds.hi,
-                     sizeY, Y.bounds.lo, Y.bounds.hi)
+            -- c.printf("\tLevel: %d GEMV A=(%d, %d) X=(%d) Y=(%d)\n\tSizeA: %dx%d Lo: %d %d Hi: %d %d SizeX: %d Lo: %d 1 Hi: %d 1 SizeY: %d Lo: %d 1 Hi: %d 1\n\n",
+            --          level, sep, par_sep, par_sep, sep,
+            --          sizeA.x, sizeA.y, A.bounds.lo.x, A.bounds.lo.y, A.bounds.hi.x, A.bounds.hi.y,
+            --          sizeX, X.bounds.lo, X.bounds.hi,
+            --          sizeY, Y.bounds.lo, Y.bounds.hi)
 
             dgemv(A, X, Y, cblas.CblasTrans)
           end
@@ -892,6 +910,8 @@ task main()
       end
     end
   end
+
+  c.printf("Done solve.\n")
 
   var j = 0
   for sep = 1, num_separators+1 do
