@@ -153,7 +153,8 @@ def check_matrix(permuted_mat, factored_mat):
     cholesky_regent = cholesky_regent.toarray()
     cholesky_regent = np.tril(cholesky_regent)
 
-    print(np.allclose(cholesky_numpy, cholesky_regent, rtol=1e-04, atol=1e-04))
+    res = np.allclose(cholesky_numpy, cholesky_regent, rtol=1e-04, atol=1e-04)
+    return res
 
 
 def check_solution(A, b, solution_regent):
@@ -168,14 +169,10 @@ def check_solution(A, b, solution_regent):
     solution_numpy = scipy.linalg.solve(A, b)
 
     res = np.allclose(solution_numpy, solution_regent, rtol=1e-04, atol=1e-04)
-    print(res)
-    if not res:
-        diff = solution_numpy - solution_regent
-        print(diff)
+    return res
 
 
 def generate_b(n):
     np.random.seed()
     a = np.random.randint(1, 11, size=(n, 1))
     scipy.io.mmwrite("B_%dx1.mtx" % n, a)
-
