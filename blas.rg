@@ -14,12 +14,11 @@
 
 import "regent"
 local c = regentlib.c
-terralib.includepath = terralib.includepath .. ";/usr/include"
 
-terralib.linklibrary("/usr/lib/libcblas.so")
+terralib.linklibrary("libcblas.so")
 local cblas = terralib.includec("cblas.h")
 
-terralib.linklibrary("/usr/lib/liblapacke.so")
+terralib.linklibrary("liblapacke.so")
 local lapack = terralib.includec("lapacke.h")
 
 function raw_ptr_factory(ty)
