@@ -552,7 +552,7 @@ task main()
                    sizeA.x, sizeA.y, pivot.bounds.lo.x, pivot.bounds.lo.y, pivot.bounds.hi.x, pivot.bounds.hi.y,
                    sizeB.x, sizeB.y, off_diag.bounds.lo.x, off_diag.bounds.lo.y, off_diag.bounds.hi.x, off_diag.bounds.hi.y)
 
-          -- write_blocks(mat, mat_part, par_level, int2d{sep, sep}, int2d{sep, par_sep}, int2d{0, 0}, "TRSM", banner)
+          write_blocks(mat, mat_part, par_level, int2d{sep, sep}, int2d{sep, par_sep}, int2d{0, 0}, "TRSM", banner, debug_path)
         end
       end
 
@@ -649,8 +649,8 @@ task main()
                      sizeC.x, sizeC.y, C.bounds.lo.x, C.bounds.lo.y, C.bounds.hi.x, C.bounds.hi.y)
 
 
-            -- write_blocks(mat, mat_part, grandpar_level,
-            --              int2d{sep, grandpar_sep}, int2d{sep, par_sep}, int2d{par_sep, grandpar_sep}, "GEMM", banner)
+            write_blocks(mat, mat_part, grandpar_level,
+                         int2d{sep, grandpar_sep}, int2d{sep, par_sep}, int2d{par_sep, grandpar_sep}, "GEMM", banner, debug_path)
           end
           grandpar_idx = grandpar_idx/2
         end

@@ -117,18 +117,92 @@ def verify(line, mat, bounds, directory=""):
         raise ex
 
 
-def debug(permuted_mat, factored_mat, output, directory=""):
-    permuted_mat = os.path.join(directory, permuted_mat)
-    factored_mat = os.path.join(directory, factored_mat)
-    output = os.path.join(directory, output)
+def permute_matrix(matrix_file, separator_file):
 
-    mat = scipy.io.mmread(permuted_mat)
+    mat = scipy.io.mmread(matrix_file)
     mat = mat.toarray()
-    mat = np.tril(mat)
 
-    omat = scipy.io.mmread(permuted_mat)
-    omat = omat.toarray()
-    omat = np.tril(omat)
+    pmat = np.zeros(mat.shape)
+
+    separators = {}
+    levels = 0
+    num_separators = 0
+
+    with open(separator_file, 'r') as f:
+        for idx, line in enumerate(f):
+            if idx == 0:
+                levels, num_separators = line.split(" ")
+                levels = int(levels)
+                num_separators = int(num_separators)
+                continue
+
+            sep, dofs = line.split(";")
+            sep = int(sep)+1
+            dofs = dofs.rstrip().split(",")
+            dofs = list(map(int, dofs))
+
+            separators[sep] = dofs
+
+    tree = []
+
+    end = None
+    start = 1
+    for level in range(levels-1, -1, -1):
+        if end is None:
+            end = 2**level+1
+        else:
+            end = start + 2**level
+        seps = list(range(start, end))
+        tree.append(seps)
+        start = end
+
+    sep_bounds = {}
+    i, j = 0, 0
+    for level, seps in enumerate(tree):
+        # print("Level:", level, "Separators:", seps)
+        for sep in seps:
+            sep_bounds[sep] = (i, j)
+
+            dofs = separators[sep]
+            # print("\tSeparator:", sep, "Dofs:", dofs)
+            for idxi, row in enumerate(dofs):
+                for idxj, col in enumerate(dofs):
+                    pmat[i+idxi, j+idxj] = mat[row, col]
+            i += (idxi + 1)
+            j += (idxj + 1)
+
+    for level, seps in enumerate(tree):
+        for sep_idx, sep in enumerate(seps):
+
+            par_idx = sep_idx
+
+            for par_level in range(level+1, levels):
+                par_idx = int(par_idx/2)
+                par_sep = tree[par_level][par_idx]
+
+                row = sep_bounds[par_sep]
+                col = sep_bounds[sep]
+
+                lx, _ = row
+                _, ly = col
+                # print ("Sep:", sep, "Bounds:", col, "Par Sep:", par_sep, "Bounds:", row, "Start:", (lx, ly))
+
+                for idxi, i in enumerate(separators[par_sep]):
+                    for idxj, j in enumerate(separators[sep]):
+                        pmat[lx+idxi, ly+idxj] = mat[i, j]
+
+    pmat = np.tril(pmat)
+
+    return pmat
+
+
+def debug_factor(matrix_file, separator_file, factored_mat, log_file, directory=""):
+    mat = permute_matrix(matrix_file, separator_file)
+
+    factored_mat = os.path.join(directory, factored_mat)
+    log_file = os.path.join(directory, log_file)
+
+    omat = np.array(mat)
 
     cholesky_numpy = scipy.linalg.cholesky(omat, lower=True)
 
@@ -136,7 +210,7 @@ def debug(permuted_mat, factored_mat, output, directory=""):
     cholesky_regent = cholesky_regent.toarray()
     cholesky_regent = np.tril(cholesky_regent)
 
-    with open(output, 'r') as f:
+    with open(log_file, 'r') as f:
         for line in f:
             line = line.lstrip().rstrip()
             if line.startswith("Level"):
@@ -158,11 +232,8 @@ def debug(permuted_mat, factored_mat, output, directory=""):
     print(np.allclose(cholesky_numpy, cholesky_regent, rtol=1e-04, atol=1e-04))
 
 
-def check_matrix(permuted_mat, factored_mat):
-    mat = scipy.io.mmread(permuted_mat)
-    mat = mat.toarray()
-    mat = np.tril(mat)
-
+def check_matrix(matrix_file, separator_file, factored_mat):
+    mat = permute_matrix(matrix_file, separator_file)
     cholesky_numpy = scipy.linalg.cholesky(mat, lower=True)
 
     cholesky_regent = scipy.io.mmread(factored_mat)

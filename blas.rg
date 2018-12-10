@@ -33,8 +33,8 @@ end
 local raw_ptr = raw_ptr_factory(double)
 
 terra get_raw_ptr_2d(rect: rect2d,
-                  pr : c.legion_physical_region_t,
-                  fld : c.legion_field_id_t)
+                     pr : c.legion_physical_region_t,
+                     fld : c.legion_field_id_t)
   var fa = c.legion_physical_region_get_field_accessor_array_2d(pr, fld)
   var subrect : c.legion_rect_2d_t
   var offsets : c.legion_byte_offset_t[2]
@@ -43,8 +43,8 @@ terra get_raw_ptr_2d(rect: rect2d,
 end
 
 terra get_raw_ptr_1d(rect: rect1d,
-                  pr : c.legion_physical_region_t,
-                  fld : c.legion_field_id_t)
+                     pr : c.legion_physical_region_t,
+                     fld : c.legion_field_id_t)
   var fa = c.legion_physical_region_get_field_accessor_array_1d(pr, fld)
   var subrect : c.legion_rect_1d_t
   var offsets : c.legion_byte_offset_t[1]
