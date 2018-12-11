@@ -267,10 +267,10 @@ task partition_separator(row_sep:int, col_sep:int, interval:int, clusters:&&&int
 
   var block_coloring = c.legion_domain_point_coloring_create()
 
-  -- if debug then
-  --   c.printf("\t\tPartitioning (%d, %d) Cluster: %d Rows: %d Cols: %d\n",
-  --            col_sep, row_sep, interval, row_cluster_size-1, col_cluster_size-1)
-  -- end
+  if debug then
+    c.printf("\t\tPartitioning (%d, %d) Cluster: %d Rows: %d Cols: %d\n",
+             col_sep, row_sep, interval, row_cluster_size-1, col_cluster_size-1)
+  end
 
   for row = 1, row_cluster_size do
 
@@ -300,22 +300,22 @@ task partition_separator(row_sep:int, col_sep:int, interval:int, clusters:&&&int
       c.legion_domain_point_coloring_color_domain(block_coloring, color:to_domain_point(),
                                                   c.legion_domain_from_rect_2d(bounds))
 
-      -- if debug then
-      --   c.printf("\t\tcolor: %d %d %d bounds.lo: %d %d, bounds.hi: %d %d size: %d %d vol: %d\n",
-      --            color.x, color.y, color.z,
-      --            bounds.lo.x, bounds.lo.y,
-      --            bounds.hi.x, bounds.hi.y,
-      --            size.x, size.y,
-      --            c.legion_domain_get_volume(c.legion_domain_from_rect_2d(bounds)))
-      -- end
+      if debug then
+        c.printf("\t\tcolor: %d %d %d bounds.lo: %d %d, bounds.hi: %d %d size: %d %d vol: %d\n",
+                 color.x, color.y, color.z,
+                 bounds.lo.x, bounds.lo.y,
+                 bounds.hi.x, bounds.hi.y,
+                 size.x, size.y,
+                 c.legion_domain_get_volume(c.legion_domain_from_rect_2d(bounds)))
+      end
 
       prev_lo = prev_lo + int2d{0, bottom-top}
     end
     prev_lo = int2d{prev_lo.x + right-left, block.bounds.lo.y}
 
-    -- if debug then
-    --   c.printf("\n")
-    -- end
+    if debug then
+      c.printf("\n")
+    end
   end
 
   var colors = ispace(int3d, {1, 1, (row_cluster_size-1)*(col_cluster_size-1)}, {row_sep, col_sep, 0})
@@ -325,10 +325,72 @@ task partition_separator(row_sep:int, col_sep:int, interval:int, clusters:&&&int
 end
 
 __demand(__inline)
-task fill_block(block:region(ispace(int2d), double))
+task fill_block(block:region(ispace(int2d), double), color:int3d, separators:&&int, NZ:int, matrix_entries:&MatrixEntry,
+               filled_blocks:region(ispace(int3d), bool))
 where
-  reads writes(block)
+  reads writes(block, filled_blocks)
 do
+  var sep1 = separators[color.y]
+  var sep2 = separators[color.x]
+  var sep1_size = sep1[0]
+  var sep2_size = sep2[0]
+  var nz = 0
+
+  fill(block, 0)
+
+  var lo = block.bounds.lo
+  var filled = false
+
+  for i = 0, sep1_size do
+    var idxi = sep1[i+1]
+
+    for j = 0, sep2_size do
+      var idxj = sep2[j+1]
+
+      if color.x == color.y and i <= j then
+        for n = 0, NZ do
+          var entry = matrix_entries[n]
+          var idx = lo + {j, i}
+
+          if entry.I == idxi and entry.J == idxj then
+            block[idx] = entry.Val
+            filled = true
+            nz += 1
+            break
+          elseif entry.I == idxj and entry.J == idxi then
+            block[idx] = entry.Val
+            filled = true
+            nz += 1
+            break
+          end
+        end
+      elseif color.x ~= color.y then
+        for n = 0, NZ do
+          var entry = matrix_entries[n]
+          var idx = lo + {j, i}
+
+          if entry.I == idxi and entry.J == idxj then
+            block[idx] = entry.Val
+            filled = true
+            nz += 1
+            break
+          elseif entry.I == idxj and entry.J == idxi then
+            block[idx] = entry.Val
+            filled = true
+            nz += 1
+            break
+          end
+        end
+      end
+    end
+  end
+
+  filled_blocks[color] = filled
+  if filled then
+    c.printf("Filled: %d %d %d with %d non-zeros\n", color.y, color.x, color.z, nz)
+  else
+    c.printf("Block %d %d %d empty\n", color.y, color.x, color.z)
+  end
 
 end
 
@@ -341,7 +403,6 @@ task main()
   var b_file = ""
   var solution_file = ""
   var factor_file = ""
-  var permuted_matrix_file = ""
   var debug_path = ""
   var debug = false
 
@@ -354,8 +415,6 @@ task main()
       clusters_file = args.argv[i+1]
     elseif c.strcmp(args.argv[i], "-m") == 0 then
       factor_file = args.argv[i+1]
-    elseif c.strcmp(args.argv[i], "-p") == 0 then
-      permuted_matrix_file = args.argv[i+1]
     elseif c.strcmp(args.argv[i], "-o") == 0 then
       solution_file = args.argv[i+1]
     elseif c.strcmp(args.argv[i], "-b") == 0 then
@@ -439,79 +498,22 @@ task main()
   var mat_part = partition(disjoint, mat, coloring, colors)
   c.legion_domain_point_coloring_destroy(coloring)
 
-  var nz = 0
-  for color in colors do
-    var part = mat_part[color]
-    var vol = c.legion_domain_get_volume(c.legion_domain_from_rect_2d(part.bounds))
-
-    if vol ~= 0 then
-      var sep1 = separators[color.x]
-      var sep2 = separators[color.y]
-      var sep1_size = sep1[0]
-      var sep2_size = sep2[0]
-
-      fill(part, 0)
-
-      var lo = part.bounds.lo
-
-      for i = 0, sep1_size do
-        var idxi = sep1[i+1]
-
-        for j = 0, sep2_size do
-          var idxj = sep2[j+1]
-
-          if color.x == color.y and i <= j then
-            for n = 0, banner.NZ do
-              var entry = matrix_entries[n]
-              var idx = lo + {j, i}
-
-              if entry.I == idxi and entry.J == idxj then
-                part[idx] = entry.Val
-                nz += 1
-                break
-
-              elseif entry.I == idxj and entry.J == idxi then
-                part[idx] = entry.Val
-                nz += 1
-                break
-              end
-            end
-
-          elseif color.x ~= color.y then
-            for n = 0, banner.NZ do
-              var entry = matrix_entries[n]
-              var idx = lo + {j, i}
-
-              if entry.I == idxi and entry.J == idxj then
-                part[idx] = entry.Val
-                nz += 1
-                break
-
-              elseif entry.I == idxj and entry.J == idxi then
-                part[idx] = entry.Val
-                nz += 1
-                break
-              end
-            end
-          end
-        end
-      end
-    end
-  end
-
-  if c.strcmp(permuted_matrix_file, '') ~= 0 then
-    c.printf("saving permuted matrix to %s\n", permuted_matrix_file)
-    write_matrix(mat, mat_part, permuted_matrix_file, banner)
-  end
-
-  c.printf("done fill: %d %d\n", nz, banner.NZ)
-
   var interval = 0
+  var max_int_size = clusters[num_separators][0][0]
+  var filled_blocks = region(ispace(int3d, {num_separators, num_separators, max_int_size}, {1, 1, 0}), bool)
+  fill(filled_blocks, false)
 
   for level = levels-1, -1, -1 do
     for sep_idx = 0, [int](math.pow(2, level)) do
       var sep = tree[level][sep_idx]
       var pivot = mat_part[{sep, sep}]
+      var pivot_part = partition_separator(sep, sep, interval, clusters, pivot, debug)
+
+      if interval == 0 then
+        for color in pivot_part.colors do
+          fill_block(pivot_part[color], color, separators, banner.NZ, matrix_entries, filled_blocks)
+        end
+      end
 
       dpotrf(pivot)
 
@@ -533,9 +535,16 @@ task main()
 
         par_idx = par_idx/2
         var par_sep = tree[par_level][par_idx]
-        var off_diag = mat_part[{sep, par_sep}]
+        var off_diag_color = int2d{sep, par_sep}
+        var off_diag = mat_part[off_diag_color]
 
         var off_diag_part = partition_separator(par_sep, sep, interval, clusters, off_diag, debug)
+
+        if interval == 0 then
+          for color in off_diag_part.colors do
+            fill_block(off_diag_part[color], color, separators, banner.NZ, matrix_entries, filled_blocks)
+          end
+        end
 
         for color in off_diag_part.colors do
           var part = off_diag_part[color]
@@ -577,6 +586,14 @@ task main()
 
           -- partition C  ex: 24, 28
           var C_part = partition_separator(grandpar_sep, par_sep, interval, clusters, C, debug)
+
+          if interval == 0 then
+            for color in C_part.colors do
+              if not filled_blocks[color] then
+                fill_block(C_part[color], color, separators, banner.NZ, matrix_entries, filled_blocks)
+              end
+            end
+          end
 
           var col_cluster_size = clusters[par_sep][interval][0]
           -- c.printf("\t\tA Vol: %d B Vol: %d C Vol: %d\n\n", A_colors.volume, B_colors.volume, C_colors.volume)
