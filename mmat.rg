@@ -151,15 +151,15 @@ do
   c.fclose(matrix_file)
 end
 
-terra gen_filename(level:int, Ax:int, Ay:int, Bx:int, By:int, Cx:int, Cy:int, operation:rawstring, mm:bool, output_dir:rawstring)
+terra gen_filename(level:int, Ax:int, Ay:int, Bx:int, By:int, Cx:int, Cy:int, operation:rawstring, mm:bool, filled:bool, output_dir:rawstring)
   var filename:int8[1024]
 
   if operation == "POTRF" then
-    c.sprintf(filename, "%s/potrf_lvl%d_a%d%d", output_dir, level, Ax, Ay)
+    c.sprintf(filename, "%s/potrf_lvl%d_a%d%d_fill%d", output_dir, level, Ax, Ay, filled)
   elseif operation == "TRSM" then
-    c.sprintf(filename, "%s/trsm_lvl%d_a%d%d_b%d%d", output_dir, level, Ax, Ay, Bx, By)
+    c.sprintf(filename, "%s/trsm_lvl%d_a%d%d_b%d%d_fill%d", output_dir, level, Ax, Ay, Bx, By, filled)
   elseif operation == "GEMM" then
-    c.sprintf(filename, "%s/gemm_lvl%d_a%d%d_b%d%d_c%d%d", output_dir, level, Ax, Ay, Bx, By, Cx, Cy)
+    c.sprintf(filename, "%s/gemm_lvl%d_a%d%d_b%d%d_c%d%d_fill%d", output_dir, level, Ax, Ay, Bx, By, Cx, Cy, filled)
   end
 
   var ext:int8[5]
@@ -178,24 +178,24 @@ end
 
 
 task write_blocks(mat: region(ispace(int2d), double), mat_part: partition(disjoint, mat, ispace(int2d)),
-                  level:int, A:int2d, B:int2d, C:int2d, operation:rawstring, banner:MMatBanner, output_dir:rawstring)
+                  level:int, A:int2d, B:int2d, C:int2d, operation:rawstring, banner:MMatBanner, filled:bool, output_dir:rawstring)
 where
   reads(mat)
 do
-  var matrix_filename:regentlib.string = gen_filename(level, A.x, A.y, B.x, B.y, C.x, C.y, operation, true, output_dir)
+  var matrix_filename:regentlib.string = gen_filename(level, A.x, A.y, B.x, B.y, C.x, C.y, operation, true, filled, output_dir)
   write_matrix(mat, mat_part, matrix_filename, banner)
 
-  var block_filename = gen_filename(level, A.x, A.y, B.x, B.y, C.x, C.y, operation, false, output_dir)
+  var block_filename = gen_filename(level, A.x, A.y, B.x, B.y, C.x, C.y, operation, false, filled, output_dir)
   var file = c.fopen(block_filename, 'w')
 
   if operation == "POTRF" then
-    c.fprintf(file, "Level: %d POTRF A=(%d, %d)\n", level, A.x, A.y)
+    c.fprintf(file, "Level: %d POTRF A=(%d, %d) Fill: %d\n", level, A.x, A.y, filled)
   elseif operation == "TRSM" then
-    c.fprintf(file, "Level: %d TRSM A=(%d, %d) B=(%d, %d)\n",
-              level, A.x, A.y, B.x, B.y)
+    c.fprintf(file, "Level: %d TRSM A=(%d, %d) B=(%d, %d) Fill: %d\n",
+              level, A.x, A.y, B.x, B.y, filled)
   elseif operation == "GEMM" then
-    c.fprintf(file, "Level: %d GEMM A=(%d, %d) B=(%d, %d) C=(%d, %d)\n",
-              level, A.x, A.y, B.x, B.y, C.x, C.y)
+    c.fprintf(file, "Level: %d GEMM A=(%d, %d) B=(%d, %d) C=(%d, %d) Fill: %d\n",
+              level, A.x, A.y, B.x, B.y, C.x, C.y, filled)
   end
 
   for color in mat_part.colors do
@@ -218,36 +218,6 @@ do
           c.fprintf(file, frmt_str, val)
         end
         c.fprintf(file, "\n")
-      end
-    end
-  end
-end
-
-
-task print_blocks(mat: region(ispace(int2d), double), mat_part: partition(disjoint, mat, ispace(int2d)))
-where
-  reads(mat)
-do
-  for color in mat_part.colors do
-    var part = mat_part[color]
-    var vol = c.legion_domain_get_volume(c.legion_domain_from_rect_2d(part.bounds))
-
-    if vol ~= 0 then
-      var size = part.bounds.hi - part.bounds.lo + {1, 1}
-      c.printf("Color: %d %d size: %dx%d bounds.lo: %d %d bounds.hi: %d %d vol: %d\n",
-               color.x, color.y, size.x, size.y, part.bounds.lo.x, part.bounds.lo.y, part.bounds.hi.x, part.bounds.hi.y, vol)
-      for i = 0, size.x do
-        for j = 0, size.y do
-          var frmt_str:rawstring
-          var val = part[part.bounds.lo + {i, j}]
-          if val < 0 then
-            frmt_str = "%0.2f, "
-          else
-            frmt_str = " %0.2f, "
-          end
-          c.printf(frmt_str, val)
-        end
-        c.printf("\n")
       end
     end
   end
@@ -387,11 +357,11 @@ do
 
   filled_blocks[color] = filled
 
-  -- if filled then
-  --   c.printf("Filled: %d %d %d with %d non-zeros\n", color.y, color.x, color.z, nz)
-  -- else
-  --   c.printf("Block %d %d %d empty\n", color.y, color.x, color.z)
-  -- end
+  if filled then
+    c.printf("Filled: %d %d %d with %d non-zeros\n", color.y, color.x, color.z, nz)
+  else
+    c.printf("Block %d %d %d empty\n", color.y, color.x, color.z)
+  end
 
 end
 
@@ -567,6 +537,9 @@ task main()
         for color in pivot_part.colors do
           fill_block(pivot_part[color], color, separators, banner.NZ, matrix_entries, filled_blocks)
         end
+        if debug then
+          write_blocks(mat, mat_part, level, int2d{sep, sep}, int2d{0, 0}, int2d{0, 0}, "POTRF", banner, true, debug_path)
+        end
       end
 
       for color in pivot_part.colors do
@@ -582,7 +555,7 @@ task main()
                  level, sep, sep, sizeA.x, sizeA.y,
                  pivot.bounds.lo.x, pivot.bounds.lo.y, pivot.bounds.hi.x, pivot.bounds.hi.y)
 
-        write_blocks(mat, mat_part, level, int2d{sep, sep}, int2d{0, 0}, int2d{0, 0}, "POTRF", banner, debug_path)
+        write_blocks(mat, mat_part, level, int2d{sep, sep}, int2d{0, 0}, int2d{0, 0}, "POTRF", banner, false, debug_path)
       end
 
       -- we should make an empty partition and accumulate the partitions we make during the TRSM by taking the union
@@ -601,6 +574,9 @@ task main()
         if interval == 0 then
           for color in off_diag_part.colors do
             fill_block(off_diag_part[color], color, separators, banner.NZ, matrix_entries, filled_blocks)
+          end
+          if debug then
+            write_blocks(mat, mat_part, par_level, int2d{sep, sep}, int2d{sep, par_sep}, int2d{0, 0}, "TRSM", banner, true, debug_path)
           end
         end
 
@@ -621,7 +597,7 @@ task main()
                    sizeA.x, sizeA.y, pivot.bounds.lo.x, pivot.bounds.lo.y, pivot.bounds.hi.x, pivot.bounds.hi.y,
                    sizeB.x, sizeB.y, off_diag.bounds.lo.x, off_diag.bounds.lo.y, off_diag.bounds.hi.x, off_diag.bounds.hi.y)
 
-          write_blocks(mat, mat_part, par_level, int2d{sep, sep}, int2d{sep, par_sep}, int2d{0, 0}, "TRSM", banner, debug_path)
+          write_blocks(mat, mat_part, par_level, int2d{sep, sep}, int2d{sep, par_sep}, int2d{0, 0}, "TRSM", banner, false, debug_path)
         end
       end
 
@@ -652,6 +628,10 @@ task main()
               if not filled_blocks[color] then
                 fill_block(C_part[color], color, separators, banner.NZ, matrix_entries, filled_blocks)
               end
+            end
+            if debug then
+              write_blocks(mat, mat_part, grandpar_level,
+                           int2d{sep, grandpar_sep}, int2d{sep, par_sep}, int2d{par_sep, grandpar_sep}, "GEMM", banner, true, debug_path)
             end
           end
 
@@ -729,7 +709,7 @@ task main()
 
 
             write_blocks(mat, mat_part, grandpar_level,
-                         int2d{sep, grandpar_sep}, int2d{sep, par_sep}, int2d{par_sep, grandpar_sep}, "GEMM", banner, debug_path)
+                         int2d{sep, grandpar_sep}, int2d{sep, par_sep}, int2d{par_sep, grandpar_sep}, "GEMM", banner, false, debug_path)
           end
           grandpar_idx = grandpar_idx/2
         end
