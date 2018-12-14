@@ -295,41 +295,49 @@ task partition_separator(row_sep:int, col_sep:int, interval:int, clusters:&&&int
 end
 
 __demand(__inline)
-task fill_block(block:region(ispace(int2d), double), color:int3d, separators:&&int, NZ:int, matrix_entries:&MatrixEntry,
-                filled_blocks:region(ispace(int3d), bool))
+task fill_block(block:region(ispace(int2d), double), color:int3d, part_lo:int2d, separators:&&int, NZ:int,
+                matrix_entries:&MatrixEntry, filled_blocks:region(ispace(int3d), int))
 where
   reads writes(block, filled_blocks)
 do
-  var sep1 = separators[color.y]
-  var sep2 = separators[color.x]
-  var sep1_size = sep1[0]
-  var sep2_size = sep2[0]
+  -- c.printf("Filling: %d %d %d\n",
+  --          color.x, color.y, color.z)
+
+  var row_sep = separators[color.x]
+  var col_sep = separators[color.y]
+
+  var row_size = row_sep[0]
+  var col_size = col_sep[0]
+
+  var lo = block.bounds.lo
+  var hi = block.bounds.hi
+  var offset = block.bounds.lo - part_lo
+  var bounds = hi - lo + offset + {1, 1}
   var nz = 0
+  -- c.printf("Filling: %d %d %d at %d %d From: %d %d To: %d %d\n",
+  --          color.x, color.y, color.z, lo.x, lo.y, offset.x, offset.y, bounds.x, bounds.y)
 
   fill(block, 0)
 
-  var lo = block.bounds.lo
-  var filled = false
+  for i = offset.x, bounds.x do
+    var idxi = row_sep[i+1]
 
-  for i = 0, sep1_size do
-    var idxi = sep1[i+1]
-
-    for j = 0, sep2_size do
-      var idxj = sep2[j+1]
-
-      if color.x == color.y and i <= j then
+    for j = offset.y, bounds.y do
+      var idxj = col_sep[j+1]
+      var idx = lo + {i, j} - offset
+      -- c.printf("Filling: %d %d I: %d J: %d ", idx.x, idx.y, idxi, idxj)
+      if color.x == color.y and j <= i then
         for n = 0, NZ do
           var entry = matrix_entries[n]
-          var idx = lo + {j, i}
 
           if entry.I == idxi and entry.J == idxj then
+            -- c.printf("Val: %0.2f", entry.Val)
             block[idx] = entry.Val
-            filled = true
             nz += 1
             break
           elseif entry.I == idxj and entry.J == idxi then
+            -- c.printf("Val: %0.2f", entry.Val)
             block[idx] = entry.Val
-            filled = true
             nz += 1
             break
           end
@@ -337,47 +345,48 @@ do
       elseif color.x ~= color.y then
         for n = 0, NZ do
           var entry = matrix_entries[n]
-          var idx = lo + {j, i}
 
           if entry.I == idxi and entry.J == idxj then
+            -- c.printf("Val: %0.2f", entry.Val)
             block[idx] = entry.Val
-            filled = true
             nz += 1
             break
           elseif entry.I == idxj and entry.J == idxi then
+            -- c.printf("Val: %0.2f", entry.Val)
             block[idx] = entry.Val
-            filled = true
             nz += 1
             break
           end
         end
       end
+      -- c.printf("\n")
+
     end
   end
 
-  filled_blocks[color] = filled
+  filled_blocks[color] = nz
 
-  if filled then
-    c.printf("Filled: %d %d %d with %d non-zeros\n", color.y, color.x, color.z, nz)
-  else
-    c.printf("Block %d %d %d empty\n", color.y, color.x, color.z)
-  end
-
+  -- if nz > 0 then
+  --   c.printf("Filled: %d %d %d with %d non-zeros\n", color.x, color.y, color.z, nz)
+  -- else
+  --   c.printf("Block %d %d %d empty\n", color.x, color.y, color.z)
+  -- end
+  return nz
 end
 
 
 __demand(__inline)
-task merge_filled_blocks(filled_blocks:region(ispace(int3d), bool), num_separators:int, interval:int, clusters:&&&int)
+task merge_filled_blocks(filled_blocks:region(ispace(int3d), int), num_separators:int, interval:int, clusters:&&&int)
 where
   reads writes(filled_blocks)
 do
   var max_int_size = clusters[num_separators][0][0]
-  var blocks = region(ispace(int3d, {num_separators, num_separators, max_int_size}, {1, 1, 0}), bool)
+  var blocks = region(ispace(int3d, {num_separators, num_separators, max_int_size}, {1, 1, 0}), int)
   copy(filled_blocks, blocks)
 
   -- max_int_size = clusters[num_separators][interval][0]
   -- filled_blocks = region(ispace(int3d {num_separators, num_separators, max_int_size}, {1, 1, 0}), bool)
-  fill(filled_blocks, false)
+  fill(filled_blocks, 0)
   c.printf("Merging blocks from interval: %d\n", interval-1)
   for block in ispace(int2d, {num_separators, num_separators}, {1, 1}) do
     var row_sep = block.x
@@ -407,7 +416,7 @@ do
             for j = top, bottom do
               var old_id = int3d{row_sep, col_sep, i*prev_cols+j}
               -- c.printf("%d ", old_id.z)
-              filled_blocks[new_id] = blocks[old_id] or filled_blocks[new_id]
+              filled_blocks[new_id] += blocks[old_id]
             end
           end
           -- c.printf("\n")
@@ -524,8 +533,9 @@ task main()
 
   var interval = 0
   var max_int_size = clusters[num_separators][0][0]
-  var filled_blocks = region(ispace(int3d, {num_separators, num_separators, max_int_size}, {1, 1, 0}), bool)
-  fill(filled_blocks, false)
+  var filled_blocks = region(ispace(int3d, {num_separators, num_separators, max_int_size}, {1, 1, 0}), int)
+  fill(filled_blocks, -1)
+  var nz = 0
 
   for level = levels-1, -1, -1 do
     for sep_idx = 0, [int](math.pow(2, level)) do
@@ -535,7 +545,9 @@ task main()
 
       if interval == 0 then
         for color in pivot_part.colors do
-          fill_block(pivot_part[color], color, separators, banner.NZ, matrix_entries, filled_blocks)
+          if filled_blocks[color] < 0 then
+            nz += fill_block(pivot_part[color], color, pivot.bounds.lo, separators, banner.NZ, matrix_entries, filled_blocks)
+          end
         end
         if debug then
           write_blocks(mat, mat_part, level, int2d{sep, sep}, int2d{0, 0}, int2d{0, 0}, "POTRF", banner, true, debug_path)
@@ -543,7 +555,7 @@ task main()
       end
 
       for color in pivot_part.colors do
-        if filled_blocks[color] then
+        if filled_blocks[color] > 0 then
           dpotrf(pivot_part[color])
         end
       end
@@ -573,7 +585,9 @@ task main()
 
         if interval == 0 then
           for color in off_diag_part.colors do
-            fill_block(off_diag_part[color], color, separators, banner.NZ, matrix_entries, filled_blocks)
+            if filled_blocks[color] < 0 then
+              nz += fill_block(off_diag_part[color], color, off_diag.bounds.lo, separators, banner.NZ, matrix_entries, filled_blocks)
+            end
           end
           if debug then
             write_blocks(mat, mat_part, par_level, int2d{sep, sep}, int2d{sep, par_sep}, int2d{0, 0}, "TRSM", banner, true, debug_path)
@@ -582,7 +596,7 @@ task main()
 
         for color in off_diag_part.colors do
           -- c.printf("\t\tTRSM B=(%d, %d, %d) A=(%d, %d)\n", color.x, color.y, color.z, sep, sep)
-          if filled_blocks[color] then
+          if filled_blocks[color] > 0 then
             var part = off_diag_part[color]
             dtrsm(pivot, part)
           end
@@ -625,8 +639,8 @@ task main()
 
           if interval == 0 then
             for color in C_part.colors do
-              if not filled_blocks[color] then
-                fill_block(C_part[color], color, separators, banner.NZ, matrix_entries, filled_blocks)
+              if filled_blocks[color] < 0 then
+                nz += fill_block(C_part[color], color, C.bounds.lo, separators, banner.NZ, matrix_entries, filled_blocks)
               end
             end
             if debug then
@@ -656,7 +670,7 @@ task main()
                   --          Ccolor.x, Ccolor.y, Ccolor.z,
                   --          Acolor.x, Acolor.y, Acolor.z,
                   --          Bcolor.x, Bcolor.y, Bcolor.z)
-                  if filled_blocks[Acolor] and filled_blocks[Bcolor] and filled_blocks[Ccolor] then
+                  if filled_blocks[Acolor] > 0 and filled_blocks[Bcolor] > 0 then
                     dgemm(ABlock, BBlock, CBlock)
                   end
                 elseif col == row then
@@ -664,7 +678,7 @@ task main()
                   -- c.printf("\t\tSYRK C=(%d, %d, %d) A=(%d, %d, %d)\n",
                   --          Ccolor.x, Ccolor.y, Ccolor.z,
                   --          Acolor.x, Acolor.y, Acolor.z)
-                  if filled_blocks[Acolor] and filled_blocks[Bcolor] then
+                  if filled_blocks[Acolor] > 0 and filled_blocks[Bcolor] > 0 then
                     dsyrk(ABlock, CBlock)
                   end
                 end
@@ -686,7 +700,7 @@ task main()
                 --          Ccolor.x, Ccolor.y, Ccolor.z,
                 --          Acolor.x, Acolor.y, Acolor.z,
                 --          Bcolor.x, Bcolor.y, Bcolor.z)
-                if filled_blocks[Acolor] and filled_blocks[Bcolor] and filled_blocks[Ccolor] then
+                if filled_blocks[Acolor] > 0 and filled_blocks[Bcolor] > 0 then
                   dgemm(ABlock, BBlock, CBlock)
                 end
               end
@@ -719,6 +733,7 @@ task main()
     merge_filled_blocks(filled_blocks, num_separators, interval, clusters)
   end
 
+  c.printf("Filled: %d Expected: %d\n", nz, banner.NZ)
   c.printf("Done factoring.\n")
 
   if c.strcmp(factor_file, '') ~= 0 then
