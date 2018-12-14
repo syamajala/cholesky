@@ -21,6 +21,7 @@ import numpy as np
 import re
 import os
 import itertools as it
+import collections
 
 
 def print_matrix(mat):
@@ -86,11 +87,11 @@ def find_file(line, directory=""):
     blocks = list(it.chain.from_iterable(blocks))
 
     if "POTRF" in line:
-        op = "potrf_lvl%d_a%d%d.mtx" % (lvl, *blocks)
+        op = "potrf_lvl%d_a%d%d_fill0.mtx" % (lvl, *blocks)
     elif "TRSM" in line:
-        op = "trsm_lvl%d_a%d%d_b%d%d.mtx" % (lvl, *blocks)
+        op = "trsm_lvl%d_a%d%d_b%d%d_fill0.mtx" % (lvl, *blocks)
     elif "GEMM" in line:
-        op = "gemm_lvl%d_a%d%d_b%d%d_c%d%d.mtx" % (lvl, *blocks)
+        op = "gemm_lvl%d_a%d%d_b%d%d_c%d%d_fill0.mtx" % (lvl, *blocks)
 
     return os.path.join(directory, op)
 
@@ -103,17 +104,20 @@ def verify(line, mat, bounds, directory=""):
     output = np.tril(output)
 
     try:
-        assert(np.allclose(mat, output, rtol=1e-04, atol=1e-04))
+        for k, v in bounds.items():
+            rV, cV = v
+            assert(np.allclose(mat[rV, cV], output[rV, cV], rtol=1e-04, atol=1e-04))
     except AssertionError as ex:
         diff = mat - output
+        print(k, v)
         print("Python:")
-        print_matrix(mat)
+        print_matrix(mat[rV, cV])
         print()
         print("Regent:")
-        print_matrix(output)
+        print_matrix(output[rV, cV])
         print()
         print("Diff:")
-        print_matrix(diff)
+        print_matrix(diff[rV, cV])
         raise ex
 
 
@@ -158,6 +162,8 @@ def permute_matrix(matrix_file, separator_file):
 
     sep_bounds = {}
     i, j = 0, 0
+    nzs = collections.defaultdict(lambda: 0)
+
     for level, seps in enumerate(tree):
         # print("Level:", level, "Separators:", seps)
         for sep in seps:
@@ -167,7 +173,10 @@ def permute_matrix(matrix_file, separator_file):
             # print("\tSeparator:", sep, "Dofs:", dofs)
             for idxi, row in enumerate(dofs):
                 for idxj, col in enumerate(dofs):
-                    pmat[i+idxi, j+idxj] = mat[row, col]
+                    if idxj <= idxi and mat[row, col]:
+                        pmat[i+idxi, j+idxj] = mat[row, col]
+                        # print("Filling:", sep, sep, i+idxi, j+idxj, "with I:", i, "J:", j, "Val:", mat[row, col])
+                        nzs[(sep, sep)] += 1
             i += (idxi + 1)
             j += (idxj + 1)
 
@@ -189,15 +198,16 @@ def permute_matrix(matrix_file, separator_file):
 
                 for idxi, i in enumerate(separators[par_sep]):
                     for idxj, j in enumerate(separators[sep]):
+                        if mat[i, j]:
+                            # print("Filling:", par_sep, sep, lx+idxi, ly+idxj, "with I:", i, "J:", j, "Val:", mat[i, j])
+                            nzs[(par_sep, sep)] += 1
                         pmat[lx+idxi, ly+idxj] = mat[i, j]
 
-    pmat = np.tril(pmat)
-
-    return pmat
+    return (nzs, pmat)
 
 
 def debug_factor(matrix_file, separator_file, factored_mat, log_file, directory=""):
-    mat = permute_matrix(matrix_file, separator_file)
+    nzs, mat = permute_matrix(matrix_file, separator_file)
 
     factored_mat = os.path.join(directory, factored_mat)
     log_file = os.path.join(directory, log_file)
@@ -233,7 +243,7 @@ def debug_factor(matrix_file, separator_file, factored_mat, log_file, directory=
 
 
 def check_matrix(matrix_file, separator_file, factored_mat):
-    mat = permute_matrix(matrix_file, separator_file)
+    nzs, mat = permute_matrix(matrix_file, separator_file)
     cholesky_numpy = scipy.linalg.cholesky(mat, lower=True)
 
     cholesky_regent = scipy.io.mmread(factored_mat)

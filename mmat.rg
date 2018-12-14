@@ -239,7 +239,7 @@ task partition_separator(row_sep:int, col_sep:int, interval:int, clusters:&&&int
 
   if debug then
     c.printf("\t\tPartitioning (%d, %d) Cluster: %d Rows: %d Cols: %d\n",
-             col_sep, row_sep, interval, row_cluster_size-1, col_cluster_size-1)
+             row_sep, col_sep, interval, row_cluster_size-1, col_cluster_size-1)
   end
 
   for row = 1, row_cluster_size do
@@ -296,13 +296,10 @@ end
 
 __demand(__inline)
 task fill_block(block:region(ispace(int2d), double), color:int3d, part_lo:int2d, separators:&&int, NZ:int,
-                matrix_entries:&MatrixEntry, filled_blocks:region(ispace(int3d), int))
+                matrix_entries:&MatrixEntry, filled_blocks:region(ispace(int3d), int), debug:bool)
 where
   reads writes(block, filled_blocks)
 do
-  -- c.printf("Filling: %d %d %d\n",
-  --          color.x, color.y, color.z)
-
   var row_sep = separators[color.x]
   var col_sep = separators[color.y]
 
@@ -366,11 +363,14 @@ do
 
   filled_blocks[color] = nz
 
-  -- if nz > 0 then
-  --   c.printf("Filled: %d %d %d with %d non-zeros\n", color.x, color.y, color.z, nz)
-  -- else
-  --   c.printf("Block %d %d %d empty\n", color.x, color.y, color.z)
-  -- end
+  if debug then
+    if nz > 0 then
+      c.printf("Filled: %d %d %d with %d non-zeros\n", color.x, color.y, color.z, nz)
+    else
+      c.printf("Block %d %d %d empty\n", color.x, color.y, color.z)
+    end
+  end
+
   return nz
 end
 
@@ -381,7 +381,7 @@ where
   reads writes(filled_blocks)
 do
   var max_int_size = clusters[num_separators][0][0]
-  var blocks = region(ispace(int3d, {num_separators, num_separators, max_int_size}, {1, 1, 0}), int)
+  var blocks = region(ispace(int3d, {num_separators, num_separators, max_int_size*max_int_size}, {1, 1, 0}), int)
   copy(filled_blocks, blocks)
 
   -- max_int_size = clusters[num_separators][interval][0]
@@ -424,6 +424,11 @@ do
       end
     end
   end
+
+  -- for block in filled_blocks.ispace do
+  --   c.printf("Merged: %d %d %d Interval: %d NZ: %d\n", block.x, block.y, block.z, interval, filled_blocks[block])
+  -- end
+
 end
 
 
@@ -533,7 +538,7 @@ task main()
 
   var interval = 0
   var max_int_size = clusters[num_separators][0][0]
-  var filled_blocks = region(ispace(int3d, {num_separators, num_separators, max_int_size}, {1, 1, 0}), int)
+  var filled_blocks = region(ispace(int3d, {num_separators, num_separators, max_int_size*max_int_size}, {1, 1, 0}), int)
   fill(filled_blocks, -1)
   var nz = 0
 
@@ -546,7 +551,7 @@ task main()
       if interval == 0 then
         for color in pivot_part.colors do
           if filled_blocks[color] < 0 then
-            nz += fill_block(pivot_part[color], color, pivot.bounds.lo, separators, banner.NZ, matrix_entries, filled_blocks)
+            nz += fill_block(pivot_part[color], color, pivot.bounds.lo, separators, banner.NZ, matrix_entries, filled_blocks, debug)
           end
         end
         if debug then
@@ -586,7 +591,7 @@ task main()
         if interval == 0 then
           for color in off_diag_part.colors do
             if filled_blocks[color] < 0 then
-              nz += fill_block(off_diag_part[color], color, off_diag.bounds.lo, separators, banner.NZ, matrix_entries, filled_blocks)
+              nz += fill_block(off_diag_part[color], color, off_diag.bounds.lo, separators, banner.NZ, matrix_entries, filled_blocks, debug)
             end
           end
           if debug then
@@ -640,7 +645,7 @@ task main()
           if interval == 0 then
             for color in C_part.colors do
               if filled_blocks[color] < 0 then
-                nz += fill_block(C_part[color], color, C.bounds.lo, separators, banner.NZ, matrix_entries, filled_blocks)
+                nz += fill_block(C_part[color], color, C.bounds.lo, separators, banner.NZ, matrix_entries, filled_blocks, debug)
               end
             end
             if debug then
@@ -666,20 +671,30 @@ task main()
                 if col < row then
                   var BBlock = A_part[Bcolor]
 
-                  -- c.printf("\t\tGEMM C=(%d, %d, %d) A=(%d, %d, %d) B=(%d, %d, %d)\n",
-                  --          Ccolor.x, Ccolor.y, Ccolor.z,
-                  --          Acolor.x, Acolor.y, Acolor.z,
-                  --          Bcolor.x, Bcolor.y, Bcolor.z)
                   if filled_blocks[Acolor] > 0 and filled_blocks[Bcolor] > 0 then
+                    -- c.printf("\t\tGEMM C=(%d, %d, %d) A=(%d, %d, %d) B=(%d, %d, %d)\n",
+                    --          Ccolor.x, Ccolor.y, Ccolor.z,
+                    --          Acolor.x, Acolor.y, Acolor.z,
+                    --          Bcolor.x, Bcolor.y, Bcolor.z)
+
                     dgemm(ABlock, BBlock, CBlock)
+
+                    if filled_blocks[Ccolor] <= 0 then
+                      filled_blocks[Ccolor] = filled_blocks[Acolor]*filled_blocks[Bcolor]
+                    end
                   end
                 elseif col == row then
 
-                  -- c.printf("\t\tSYRK C=(%d, %d, %d) A=(%d, %d, %d)\n",
-                  --          Ccolor.x, Ccolor.y, Ccolor.z,
-                  --          Acolor.x, Acolor.y, Acolor.z)
-                  if filled_blocks[Acolor] > 0 and filled_blocks[Bcolor] > 0 then
+                  if filled_blocks[Acolor] > 0 then
+                    -- c.printf("\t\tSYRK C=(%d, %d, %d) A=(%d, %d, %d)\n",
+                    --          Ccolor.x, Ccolor.y, Ccolor.z,
+                    --          Acolor.x, Acolor.y, Acolor.z)
+
                     dsyrk(ABlock, CBlock)
+
+                    if filled_blocks[Ccolor] <= 0 then
+                      filled_blocks[Ccolor] = filled_blocks[Acolor]*filled_blocks[Bcolor]
+                    end
                   end
                 end
               end
@@ -696,12 +711,17 @@ task main()
                 var Ccolor = int3d{grandpar_sep, par_sep, row*(col_cluster_size-1)+col}
                 var CBlock = C_part[Ccolor]
 
-                -- c.printf("\t\tGEMM C=(%d, %d, %d) A=(%d, %d, %d) B=(%d, %d, %d)\n",
-                --          Ccolor.x, Ccolor.y, Ccolor.z,
-                --          Acolor.x, Acolor.y, Acolor.z,
-                --          Bcolor.x, Bcolor.y, Bcolor.z)
                 if filled_blocks[Acolor] > 0 and filled_blocks[Bcolor] > 0 then
+                  -- c.printf("\t\tGEMM C=(%d, %d, %d) A=(%d, %d, %d) B=(%d, %d, %d)\n",
+                  --          Ccolor.x, Ccolor.y, Ccolor.z,
+                  --          Acolor.x, Acolor.y, Acolor.z,
+                  --          Bcolor.x, Bcolor.y, Bcolor.z)
+
                   dgemm(ABlock, BBlock, CBlock)
+
+                  if filled_blocks[Ccolor] <= 0 then
+                    filled_blocks[Ccolor] = filled_blocks[Acolor]*filled_blocks[Bcolor]
+                  end
                 end
               end
             end
