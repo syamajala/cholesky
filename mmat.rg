@@ -225,12 +225,13 @@ end
 
 
 __demand(__inline)
-task partition_separator(row_sep:int, col_sep:int, interval:int, clusters:&&&int,
+task partition_separator(block_color:int2d, interval:int, clusters:&&&int,
                          block:region(ispace(int2d), double), debug:bool)
-
+  var row_sep = block_color.x
   var row_cluster = clusters[row_sep]
   var row_cluster_size = row_cluster[interval][0]
 
+  var col_sep = block_color.y
   var col_cluster = clusters[col_sep]
   var col_cluster_size = col_cluster[interval][0]
   var prev_lo = block.bounds.lo
@@ -525,7 +526,7 @@ task main()
         --            child_bounds.lo.x, child_bounds.lo.y, child_bounds.hi.x, child_bounds.hi.y)
         -- end
 
-        var color:int2d = {sep, par_sep}
+        var color:int2d = {par_sep, sep}
         c.legion_domain_point_coloring_color_domain(coloring, color:to_domain_point(), c.legion_domain_from_rect_2d(child_bounds))
 
       end
@@ -545,8 +546,9 @@ task main()
   for level = levels-1, -1, -1 do
     for sep_idx = 0, [int](math.pow(2, level)) do
       var sep = tree[level][sep_idx]
-      var pivot = mat_part[{sep, sep}]
-      var pivot_part = partition_separator(sep, sep, interval, clusters, pivot, debug)
+      var pivot_color = int2d{sep, sep}
+      var pivot = mat_part[pivot_color]
+      var pivot_part = partition_separator(pivot_color, interval, clusters, pivot, debug)
 
       if interval == 0 then
         for color in pivot_part.colors do
@@ -555,7 +557,7 @@ task main()
           end
         end
         if debug then
-          write_blocks(mat, mat_part, level, int2d{sep, sep}, int2d{0, 0}, int2d{0, 0}, "POTRF", banner, true, debug_path)
+          write_blocks(mat, mat_part, level, pivot_color, int2d{0, 0}, int2d{0, 0}, "POTRF", banner, true, debug_path)
         end
       end
 
@@ -572,7 +574,7 @@ task main()
                  level, sep, sep, sizeA.x, sizeA.y,
                  pivot.bounds.lo.x, pivot.bounds.lo.y, pivot.bounds.hi.x, pivot.bounds.hi.y)
 
-        write_blocks(mat, mat_part, level, int2d{sep, sep}, int2d{0, 0}, int2d{0, 0}, "POTRF", banner, false, debug_path)
+        write_blocks(mat, mat_part, level, pivot_color, int2d{0, 0}, int2d{0, 0}, "POTRF", banner, false, debug_path)
       end
 
       -- we should make an empty partition and accumulate the partitions we make during the TRSM by taking the union
@@ -583,10 +585,10 @@ task main()
 
         par_idx = par_idx/2
         var par_sep = tree[par_level][par_idx]
-        var off_diag_color = int2d{sep, par_sep}
+        var off_diag_color = int2d{par_sep, sep}
         var off_diag = mat_part[off_diag_color]
 
-        var off_diag_part = partition_separator(par_sep, sep, interval, clusters, off_diag, debug)
+        var off_diag_part = partition_separator(off_diag_color, interval, clusters, off_diag, debug)
 
         if interval == 0 then
           for color in off_diag_part.colors do
@@ -595,7 +597,7 @@ task main()
             end
           end
           if debug then
-            write_blocks(mat, mat_part, par_level, int2d{sep, sep}, int2d{sep, par_sep}, int2d{0, 0}, "TRSM", banner, true, debug_path)
+            write_blocks(mat, mat_part, par_level, pivot_color, off_diag_color, int2d{0, 0}, "TRSM", banner, true, debug_path)
           end
         end
 
@@ -612,11 +614,11 @@ task main()
           var sizeB = off_diag.bounds.hi - off_diag.bounds.lo + {1, 1}
 
           c.printf("\tLevel: %d TRSM A=(%d, %d) B=(%d, %d)\n\tSizeA: %dx%d Lo: %d %d Hi: %d %d SizeB: %dx%d Lo: %d %d Hi: %d %d\n\n",
-                   par_level, sep, sep, sep, par_sep,
+                   par_level, sep, sep, par_sep, sep,
                    sizeA.x, sizeA.y, pivot.bounds.lo.x, pivot.bounds.lo.y, pivot.bounds.hi.x, pivot.bounds.hi.y,
                    sizeB.x, sizeB.y, off_diag.bounds.lo.x, off_diag.bounds.lo.y, off_diag.bounds.hi.x, off_diag.bounds.hi.y)
 
-          write_blocks(mat, mat_part, par_level, int2d{sep, sep}, int2d{sep, par_sep}, int2d{0, 0}, "TRSM", banner, false, debug_path)
+          write_blocks(mat, mat_part, par_level, pivot_color, off_diag_color, int2d{0, 0}, "TRSM", banner, false, debug_path)
         end
       end
 
@@ -629,18 +631,22 @@ task main()
         for grandpar_level = par_level, -1, -1 do
           var grandpar_sep = tree[grandpar_level][grandpar_idx]
 
-          var A = mat_part[{sep, grandpar_sep}] -- ex: 16, 28
-          var B = mat_part[{sep, par_sep}] -- ex: 16, 24
-          var C = mat_part[{par_sep, grandpar_sep}] -- ex: 24, 28
+          var A_color = int2d{grandpar_sep, sep}
+          var B_color = int2d{par_sep, sep}
+          var C_color = int2d{grandpar_sep, par_sep}
+
+          var A = mat_part[A_color] -- ex: 16, 28
+          var B = mat_part[B_color] -- ex: 16, 24
+          var C = mat_part[C_color] -- ex: 24, 28
 
           -- partition A (should be done in TRSM above) ex: 16, 28
-          var A_part = partition_separator(grandpar_sep, sep, interval, clusters, A, debug)
+          var A_part = partition_separator(A_color, interval, clusters, A, debug)
 
           -- partition B (should be done in TRSM above) ex: 16, 24
-          var B_part = partition_separator(par_sep, sep, interval, clusters, B, debug)
+          var B_part = partition_separator(B_color, interval, clusters, B, debug)
 
           -- partition C  ex: 24, 28
-          var C_part = partition_separator(grandpar_sep, par_sep, interval, clusters, C, debug)
+          var C_part = partition_separator(C_color, interval, clusters, C, debug)
 
           if interval == 0 then
             for color in C_part.colors do
@@ -649,8 +655,7 @@ task main()
               end
             end
             if debug then
-              write_blocks(mat, mat_part, grandpar_level,
-                           int2d{sep, grandpar_sep}, int2d{sep, par_sep}, int2d{par_sep, grandpar_sep}, "GEMM", banner, true, debug_path)
+              write_blocks(mat, mat_part, grandpar_level, A_color, B_color, C_color, "GEMM", banner, true, debug_path)
             end
           end
 
@@ -734,16 +739,15 @@ task main()
 
             c.printf("\tLevel: %d GEMM A=(%d, %d) B=(%d, %d) C=(%d, %d)\n\tSizeA: %dx%d Lo: %d %d Hi: %d %d SizeB: %dx%d Lo: %d %d Hi: %d %d SizeC: %dx%d Lo: %d %d Hi: %d %d\n\n",
                      grandpar_level,
-                     sep, grandpar_sep,
-                     sep, par_sep,
-                     par_sep, grandpar_sep,
+                     grandpar_sep, sep,
+                     par_sep, sep,
+                     grandpar_sep, par_sep,
                      sizeA.x, sizeA.y, A.bounds.lo.x, A.bounds.lo.y, A.bounds.hi.x, A.bounds.hi.y,
                      sizeB.x, sizeB.y, B.bounds.lo.x, B.bounds.lo.y, B.bounds.hi.x, B.bounds.hi.y,
                      sizeC.x, sizeC.y, C.bounds.lo.x, C.bounds.lo.y, C.bounds.hi.x, C.bounds.hi.y)
 
 
-            write_blocks(mat, mat_part, grandpar_level,
-                         int2d{sep, grandpar_sep}, int2d{sep, par_sep}, int2d{par_sep, grandpar_sep}, "GEMM", banner, false, debug_path)
+            write_blocks(mat, mat_part, grandpar_level, A_color, B_color, C_color, "GEMM", banner, false, debug_path)
           end
           grandpar_idx = grandpar_idx/2
         end
@@ -834,7 +838,7 @@ task main()
         par_idx = par_idx/2
         var par_sep = tree[par_level][par_idx]
 
-        var A = mat_part[{sep, par_sep}]
+        var A = mat_part[{par_sep, sep}]
         var sizeA = A.bounds.hi - A.bounds.lo + {1, 1}
         var X = Bpart[sep]
         var sizeX = X.bounds.hi - X.bounds.lo + 1
@@ -873,7 +877,7 @@ task main()
         for sep_idx = [int](math.pow(2, level))-1, -1, -1 do
           var sep = tree[level][sep_idx]
 
-          var A = mat_part[{sep, par_sep}]
+          var A = mat_part[{par_sep, sep}]
           var sizeA = A.bounds.hi - A.bounds.lo + {1, 1}
           var X = Bpart[par_sep]
           var sizeX = X.bounds.hi - X.bounds.lo + 1
