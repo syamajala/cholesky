@@ -65,18 +65,14 @@ struct MatrixEntry {
 }
 
 
-terra read_matrix(file:&c.FILE, nz:int)
-  var entries = [&MatrixEntry](c.malloc(sizeof(MatrixEntry) * nz+1))
-
+terra read_matrix(file:&c.FILE, nz:int, cols:int)
   for i = 0, nz do
-    var entry = entries[i]
+    var entry:MatrixEntry
     c.fscanf(file, "%d %d %lg\n", &(entry.I), &(entry.J), &(entry.Val))
     entry.I = entry.I - 1
     entry.J = entry.J - 1
-    entries[i] = entry
+    mnd.add_entry(entry.I*cols+entry.J, entry.Val)
   end
-
-  return entries
 end
 
 terra read_b(file:rawstring, n:int)
@@ -296,8 +292,8 @@ task partition_separator(block_color:int2d, interval:int, clusters:&&&int,
 end
 
 __demand(__inline)
-task fill_block(block:region(ispace(int2d), double), color:int3d, part_lo:int2d, separators:&&int, NZ:int,
-                matrix_entries:&MatrixEntry, filled_blocks:region(ispace(int3d), int), debug:bool)
+task fill_block(block:region(ispace(int2d), double), color:int3d, part_lo:int2d, separators:&&int, cols:int,
+                filled_blocks:region(ispace(int3d), int), debug:bool)
 where
   reads writes(block, filled_blocks)
 do
@@ -323,42 +319,43 @@ do
     for j = offset.y, bounds.y do
       var idxj = col_sep[j+1]
       var idx = lo + {i, j} - offset
-      -- c.printf("Filling: %d %d I: %d J: %d ", idx.x, idx.y, idxi, idxj)
+
       if color.x == color.y and j <= i then
-        for n = 0, NZ do
-          var entry = matrix_entries[n]
+        -- c.printf("Filling Diagonal: %d %d I: %d J: %d key: %d ", idx.x, idx.y, idxi, idxj, idxi*cols+idxj)
 
-          if entry.I == idxi and entry.J == idxj then
-            -- c.printf("Val: %0.2f", entry.Val)
-            block[idx] = entry.Val
+        var entry = mnd.find_entry(idxi*cols+idxj)
+        if entry ~= 0 then
+          -- c.printf("Entry: %0.2f", entry)
+          block[idx] = entry
+          nz += 1
+        else
+          entry = mnd.find_entry(idxj*cols+idxi)
+          if entry ~= 0 then
+            -- c.printf("Entry: %0.2f", entry)
+            block[idx] = entry
             nz += 1
-            break
-          elseif entry.I == idxj and entry.J == idxi then
-            -- c.printf("Val: %0.2f", entry.Val)
-            block[idx] = entry.Val
-            nz += 1
-            break
           end
         end
+
       elseif color.x ~= color.y then
-        for n = 0, NZ do
-          var entry = matrix_entries[n]
+        -- c.printf("Filling Off-Diagonal: %d %d I: %d J: %d key: %d ", idx.x, idx.y, idxi, idxj, idxi*cols+idxj)
 
-          if entry.I == idxi and entry.J == idxj then
-            -- c.printf("Val: %0.2f", entry.Val)
-            block[idx] = entry.Val
+        var entry = mnd.find_entry(idxi*cols+idxj)
+        if entry ~= 0 then
+          -- c.printf("Entry: %0.2f", entry)
+          block[idx] = entry
+          nz += 1
+        else
+          entry = mnd.find_entry(idxj*cols+idxi)
+          if entry ~= 0 then
+            -- c.printf("Entry: %0.2f", entry)
+            block[idx] = entry
             nz += 1
-            break
-          elseif entry.I == idxj and entry.J == idxi then
-            -- c.printf("Val: %0.2f", entry.Val)
-            block[idx] = entry.Val
-            nz += 1
-            break
           end
         end
+
       end
       -- c.printf("\n")
-
     end
   end
 
@@ -482,7 +479,7 @@ task main()
 
   var mat = region(ispace(int2d, {x = banner.M, y = banner.N}), double)
 
-  var matrix_entries = read_matrix(matrix_file, banner.NZ)
+  read_matrix(matrix_file, banner.NZ, banner.N)
   c.fclose(matrix_file)
 
   var coloring = c.legion_domain_point_coloring_create()
@@ -543,6 +540,20 @@ task main()
   fill(filled_blocks, -1)
   var nz = 0
 
+  -- for level = levels-1, -1, -1 do
+  --   for lvl = 0, level do
+  --     for sep_idx = 0, [int](math.pow(2, lvl)) do
+  --       var row = tree[lvl][sep_idx]
+  --       for clvl = lvl+1, level+1 do
+  --         for csep_idx = sep_idx, [int](math.pow(2, clvl)) do
+  --           var col = tree[clvl][csep_idx]
+  --           c.printf("%d %d\n", row, col)
+  --         end
+  --       end
+  --     end
+  --   end
+  -- end
+
   for level = levels-1, -1, -1 do
     for sep_idx = 0, [int](math.pow(2, level)) do
       var sep = tree[level][sep_idx]
@@ -553,7 +564,7 @@ task main()
       if interval == 0 then
         for color in pivot_part.colors do
           if filled_blocks[color] < 0 then
-            nz += fill_block(pivot_part[color], color, pivot.bounds.lo, separators, banner.NZ, matrix_entries, filled_blocks, debug)
+            nz += fill_block(pivot_part[color], color, pivot.bounds.lo, separators, banner.N, filled_blocks, debug)
           end
         end
         if debug then
@@ -593,7 +604,7 @@ task main()
         if interval == 0 then
           for color in off_diag_part.colors do
             if filled_blocks[color] < 0 then
-              nz += fill_block(off_diag_part[color], color, off_diag.bounds.lo, separators, banner.NZ, matrix_entries, filled_blocks, debug)
+              nz += fill_block(off_diag_part[color], color, off_diag.bounds.lo, separators, banner.N, filled_blocks, debug)
             end
           end
           if debug then
@@ -651,7 +662,7 @@ task main()
           if interval == 0 then
             for color in C_part.colors do
               if filled_blocks[color] < 0 then
-                nz += fill_block(C_part[color], color, C.bounds.lo, separators, banner.NZ, matrix_entries, filled_blocks, debug)
+                nz += fill_block(C_part[color], color, C.bounds.lo, separators, banner.N, filled_blocks, debug)
               end
             end
             if debug then
@@ -766,8 +777,6 @@ task main()
   end
 
   if c.strcmp(b_file, '') == 0 then
-    c.free(matrix_entries)
-
     for i = 0, num_separators+1 do
       c.free(separators[i])
     end
@@ -778,6 +787,8 @@ task main()
     end
 
     c.free(tree)
+
+    mnd.delete_entries()
     return
   end
 
@@ -922,8 +933,6 @@ task main()
     c.fclose(solution)
   end
 
-  c.free(matrix_entries)
-
   for i = 0, num_separators+1 do
     c.free(separators[i])
   end
@@ -935,6 +944,8 @@ task main()
   c.free(tree)
 
   c.free(Bentries)
+
+  mnd.delete_entries()
 end
 
 regentlib.start(main)

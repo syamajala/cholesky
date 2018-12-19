@@ -198,6 +198,33 @@ void print_clusters(int ***clusters, int num_separators)
   }
 }
 
+void add_entry(int idx, double val)
+{
+  Entry *e = malloc(sizeof(Entry));
+  e->idx = idx;
+  e->val = val;
+
+  HASH_ADD_INT( entries, idx, e);
+}
+
+double find_entry(int idx)
+{
+  Entry *e;
+  HASH_FIND_INT(entries, &idx, e);
+  if(e)
+    return e->val;
+
+  return 0;
+}
+
+void delete_entries() {
+  Entry *ce, *tmp;
+  HASH_ITER(hh, entries, ce, tmp) {
+    HASH_DEL(entries, ce);
+    free(ce);
+  }
+}
+
 /* int main() { */
 /*   int ROWS = 400; */
 /*   int **separators = read_separators("lapl_20_2_ord_5.txt", ROWS); */

@@ -120,8 +120,8 @@ end
 task dgemm(rA : region(ispace(int2d), double),
            rB : region(ispace(int2d), double),
            rC : region(ispace(int2d), double))
--- where reads(rA, rB), reduces -(rC)
-where reads(rA, rB), reads writes(rC)
+where reads(rA, rB), reduces -(rC)
+-- where reads(rA, rB), reads writes(rC)
 do
   var rectA = rA.bounds
   var sizeA:int2d = rectA.hi - rectA.lo + {1, 1}
@@ -162,8 +162,8 @@ end
 
 task dsyrk(rA : region(ispace(int2d), double),
            rC : region(ispace(int2d), double))
--- where reads(rA), reduces -(rC)
-where reads(rA), reads writes(rC)
+where reads(rA), reduces -(rC)
+-- where reads(rA), reads writes(rC)
 do
   var rectA = rA.bounds
   var sizeA:int2d = rectA.hi - rectA.lo + {1, 1}
