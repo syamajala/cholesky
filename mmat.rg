@@ -27,6 +27,11 @@ local blas = require("blas")
 terralib.linklibrary("libcblas.so")
 local cblas = terralib.includec("cblas.h")
 
+fspace Filled {
+  nz:int,
+  filled:int1d
+}
+
 struct MMatBanner {
   M:int
   N:int
@@ -293,7 +298,7 @@ end
 
 __demand(__inline)
 task fill_block(block:region(ispace(int2d), double), color:int3d, part_lo:int2d, separators:&&int, cols:int,
-                filled_blocks:region(ispace(int3d), int), debug:bool)
+                filled_blocks:region(ispace(int3d), Filled), debug:bool)
 where
   reads writes(block, filled_blocks)
 do
@@ -359,7 +364,11 @@ do
     end
   end
 
-  filled_blocks[color] = nz
+  filled_blocks[color].nz = nz
+
+  if nz > 0 then
+    filled_blocks[color].filled = 0
+  end
 
   if debug then
     if nz > 0 then
@@ -374,17 +383,19 @@ end
 
 
 __demand(__inline)
-task merge_filled_blocks(filled_blocks:region(ispace(int3d), int), num_separators:int, interval:int, clusters:&&&int)
+task merge_filled_blocks(filled_blocks:region(ispace(int3d), Filled), num_separators:int, interval:int, clusters:&&&int)
 where
   reads writes(filled_blocks)
 do
   var max_int_size = clusters[num_separators][0][0]
-  var blocks = region(ispace(int3d, {num_separators, num_separators, max_int_size*max_int_size}, {1, 1, 0}), int)
+  var blocks = region(ispace(int3d, {num_separators, num_separators, max_int_size*max_int_size}, {1, 1, 0}), Filled)
   copy(filled_blocks, blocks)
 
   -- max_int_size = clusters[num_separators][interval][0]
   -- filled_blocks = region(ispace(int3d {num_separators, num_separators, max_int_size}, {1, 1, 0}), bool)
-  fill(filled_blocks, 0)
+  fill(filled_blocks.nz, 0)
+  fill(filled_blocks.filled, 1)
+
   c.printf("Merging blocks from interval: %d\n", interval-1)
   for block in ispace(int2d, {num_separators, num_separators}, {1, 1}) do
     var row_sep = block.x
@@ -414,7 +425,10 @@ do
             for j = top, bottom do
               var old_id = int3d{row_sep, col_sep, i*prev_cols+j}
               -- c.printf("%d ", old_id.z)
-              filled_blocks[new_id] += blocks[old_id]
+              filled_blocks[new_id].nz += blocks[old_id].nz
+              if filled_blocks[new_id].nz > 0 then
+                filled_blocks[new_id].filled = 0
+              end
             end
           end
           -- c.printf("\n")
@@ -424,9 +438,18 @@ do
   end
 
   -- for block in filled_blocks.ispace do
-  --   c.printf("Merged: %d %d %d Interval: %d NZ: %d\n", block.x, block.y, block.z, interval, filled_blocks[block])
+  --   c.printf("Merged: %d %d %d Interval: %d NZ: %d\n", block.x, block.y, block.z, interval, filled_blocks[block].nz)
   -- end
 
+end
+
+__demand(__inline)
+task find_color_space(color:int2d, interval:int, clusters:&&&int, filled_ispace:ispace(int3d))
+  var rows = clusters[color.x][interval][0]-1
+  var cols = clusters[color.y][interval][0]-1
+
+  var colors = ispace(int3d, {1, 1, rows*cols}, {color.x, color.y, 0})
+  return filled_ispace & colors
 end
 
 
@@ -536,46 +559,59 @@ task main()
 
   var interval = 0
   var max_int_size = clusters[num_separators][0][0]
-  var filled_blocks = region(ispace(int3d, {num_separators, num_separators, max_int_size*max_int_size}, {1, 1, 0}), int)
-  fill(filled_blocks, -1)
+  var filled_blocks = region(ispace(int3d, {num_separators, num_separators, max_int_size*max_int_size}, {1, 1, 0}), Filled)
+  fill(filled_blocks.nz, -1)
+  fill(filled_blocks.filled, 1)
+
   var nz = 0
 
-  -- for level = levels-1, -1, -1 do
-  --   for lvl = 0, level do
-  --     for sep_idx = 0, [int](math.pow(2, lvl)) do
-  --       var row = tree[lvl][sep_idx]
-  --       for clvl = lvl+1, level+1 do
-  --         for csep_idx = sep_idx, [int](math.pow(2, clvl)) do
-  --           var col = tree[clvl][csep_idx]
-  --           c.printf("%d %d\n", row, col)
-  --         end
-  --       end
-  --     end
-  --   end
-  -- end
-
   for level = levels-1, -1, -1 do
+
+    -- partition here
+    for lvl = 0, level+1 do
+      for sep_idx = 0, [int](math.pow(2, lvl)) do
+        var row = tree[lvl][sep_idx]
+        -- c.printf("Partitioning: %d %d\n", row, row)
+        var block_color = int2d{row, row}
+        var block = mat_part[block_color]
+        var block_part = partition_separator(block_color, interval, clusters, block, debug)
+
+        if interval == 0 then
+          for color in block_part.colors do
+            nz += fill_block(block_part[color], color, block.bounds.lo, separators, banner.N, filled_blocks, debug)
+          end
+        end
+
+        for clvl = lvl+1, level+1 do
+          for csep_idx = [int](sep_idx*math.pow(2, clvl-lvl)), [int]((sep_idx+1)*math.pow(2, clvl-lvl)) do
+            var col = tree[clvl][csep_idx]
+            -- c.printf("Partitioning: %d %d\n", row, col)
+            var block_color = int2d{row, col}
+            var block = mat_part[block_color]
+            var block_part = partition_separator(block_color, interval, clusters, block, debug)
+
+            if interval == 0 then
+              for color in block_part.colors do
+                nz += fill_block(block_part[color], color, block.bounds.lo, separators, banner.N, filled_blocks, debug)
+              end
+            end
+          end
+        end
+      end
+    end
+
+    var filled_part = partition(filled_blocks.filled, ispace(int1d, 2))
+    var filled_ispace = filled_part[0].ispace
+
     for sep_idx = 0, [int](math.pow(2, level)) do
       var sep = tree[level][sep_idx]
       var pivot_color = int2d{sep, sep}
       var pivot = mat_part[pivot_color]
       var pivot_part = partition_separator(pivot_color, interval, clusters, pivot, debug)
+      var filled_pivot = find_color_space(pivot_color, interval, clusters, filled_ispace)
 
-      if interval == 0 then
-        for color in pivot_part.colors do
-          if filled_blocks[color] < 0 then
-            nz += fill_block(pivot_part[color], color, pivot.bounds.lo, separators, banner.N, filled_blocks, debug)
-          end
-        end
-        if debug then
-          write_blocks(mat, mat_part, level, pivot_color, int2d{0, 0}, int2d{0, 0}, "POTRF", banner, true, debug_path)
-        end
-      end
-
-      for color in pivot_part.colors do
-        if filled_blocks[color] > 0 then
-          dpotrf(pivot_part[color])
-        end
+      for color in filled_pivot do
+        dpotrf(pivot_part[color])
       end
 
       if debug then
@@ -598,26 +634,11 @@ task main()
         var par_sep = tree[par_level][par_idx]
         var off_diag_color = int2d{par_sep, sep}
         var off_diag = mat_part[off_diag_color]
-
         var off_diag_part = partition_separator(off_diag_color, interval, clusters, off_diag, debug)
+        var filled_off_diag = find_color_space(off_diag_color, interval, clusters, filled_ispace)
 
-        if interval == 0 then
-          for color in off_diag_part.colors do
-            if filled_blocks[color] < 0 then
-              nz += fill_block(off_diag_part[color], color, off_diag.bounds.lo, separators, banner.N, filled_blocks, debug)
-            end
-          end
-          if debug then
-            write_blocks(mat, mat_part, par_level, pivot_color, off_diag_color, int2d{0, 0}, "TRSM", banner, true, debug_path)
-          end
-        end
-
-        for color in off_diag_part.colors do
-          -- c.printf("\t\tTRSM B=(%d, %d, %d) A=(%d, %d)\n", color.x, color.y, color.z, sep, sep)
-          if filled_blocks[color] > 0 then
-            var part = off_diag_part[color]
-            dtrsm(pivot, part)
-          end
+        for color in filled_off_diag do
+          dtrsm(pivot, off_diag_part[color])
         end
 
         if debug then
@@ -659,26 +680,18 @@ task main()
           -- partition C  ex: 24, 28
           var C_part = partition_separator(C_color, interval, clusters, C, debug)
 
-          if interval == 0 then
-            for color in C_part.colors do
-              if filled_blocks[color] < 0 then
-                nz += fill_block(C_part[color], color, C.bounds.lo, separators, banner.N, filled_blocks, debug)
-              end
-            end
-            if debug then
-              write_blocks(mat, mat_part, grandpar_level, A_color, B_color, C_color, "GEMM", banner, true, debug_path)
-            end
-          end
-
           var col_cluster_size = clusters[par_sep][interval][0]
           -- c.printf("\t\tA Vol: %d B Vol: %d C Vol: %d\n\n", A_colors.volume, B_colors.volume, C_colors.volume)
 
+          var filled_A_colors = find_color_space(A_color, interval, clusters, filled_ispace)
+          var filled_B_colors = find_color_space(B_color, interval, clusters, filled_ispace)
+
           if grandpar_sep == par_sep then
-            for Acolor in A_part.colors do
+            for Acolor in filled_A_colors do
               var row = Acolor.z
               var ABlock = A_part[Acolor]
 
-              for Bcolor in A_part.colors do
+              for Bcolor in filled_B_colors do
                 var col = Bcolor.z
 
                 var Ccolor = int3d{grandpar_sep, par_sep, row*(col_cluster_size-1)+col}
@@ -687,47 +700,6 @@ task main()
                 if col < row then
                   var BBlock = A_part[Bcolor]
 
-                  if filled_blocks[Acolor] > 0 and filled_blocks[Bcolor] > 0 then
-                    -- c.printf("\t\tGEMM C=(%d, %d, %d) A=(%d, %d, %d) B=(%d, %d, %d)\n",
-                    --          Ccolor.x, Ccolor.y, Ccolor.z,
-                    --          Acolor.x, Acolor.y, Acolor.z,
-                    --          Bcolor.x, Bcolor.y, Bcolor.z)
-
-                    dgemm(ABlock, BBlock, CBlock)
-
-                    if filled_blocks[Ccolor] <= 0 then
-                      filled_blocks[Ccolor] = filled_blocks[Acolor]*filled_blocks[Bcolor]
-                    end
-                  end
-                elseif col == row then
-
-                  if filled_blocks[Acolor] > 0 then
-                    -- c.printf("\t\tSYRK C=(%d, %d, %d) A=(%d, %d, %d)\n",
-                    --          Ccolor.x, Ccolor.y, Ccolor.z,
-                    --          Acolor.x, Acolor.y, Acolor.z)
-
-                    dsyrk(ABlock, CBlock)
-
-                    if filled_blocks[Ccolor] <= 0 then
-                      filled_blocks[Ccolor] = filled_blocks[Acolor]*filled_blocks[Bcolor]
-                    end
-                  end
-                end
-              end
-            end
-          else
-            for Acolor in A_part.colors do
-              var ABlock = A_part[Acolor]
-              var row = Acolor.z
-
-              for Bcolor in B_part.colors do
-                var BBlock = B_part[Bcolor]
-                var col = Bcolor.z
-
-                var Ccolor = int3d{grandpar_sep, par_sep, row*(col_cluster_size-1)+col}
-                var CBlock = C_part[Ccolor]
-
-                if filled_blocks[Acolor] > 0 and filled_blocks[Bcolor] > 0 then
                   -- c.printf("\t\tGEMM C=(%d, %d, %d) A=(%d, %d, %d) B=(%d, %d, %d)\n",
                   --          Ccolor.x, Ccolor.y, Ccolor.z,
                   --          Acolor.x, Acolor.y, Acolor.z,
@@ -735,10 +707,51 @@ task main()
 
                   dgemm(ABlock, BBlock, CBlock)
 
-                  if filled_blocks[Ccolor] <= 0 then
-                    filled_blocks[Ccolor] = filled_blocks[Acolor]*filled_blocks[Bcolor]
+                  if filled_blocks[Ccolor].nz <= 0 then
+                    filled_blocks[Ccolor].nz = filled_blocks[Acolor].nz*filled_blocks[Bcolor].nz
+                    filled_blocks[Ccolor].filled = 0
                   end
+
+                elseif col == row then
+
+                  -- c.printf("\t\tSYRK C=(%d, %d, %d) A=(%d, %d, %d)\n",
+                  --          Ccolor.x, Ccolor.y, Ccolor.z,
+                  --          Acolor.x, Acolor.y, Acolor.z)
+
+                  dsyrk(ABlock, CBlock)
+
+                  if filled_blocks[Ccolor].nz <= 1 then
+                    filled_blocks[Ccolor].nz = filled_blocks[Acolor].nz*filled_blocks[Ccolor].nz
+                    filled_blocks[Ccolor].filled = 0
+                  end
+
                 end
+              end
+            end
+          else
+            for Acolor in filled_A_colors do
+              var ABlock = A_part[Acolor]
+              var row = Acolor.z
+
+              for Bcolor in filled_B_colors do
+                var BBlock = B_part[Bcolor]
+                var col = Bcolor.z
+
+                var Ccolor = int3d{grandpar_sep, par_sep, row*(col_cluster_size-1)+col}
+                var CBlock = C_part[Ccolor]
+
+                -- c.printf("\t\tGEMM C=(%d, %d, %d) A=(%d, %d, %d) B=(%d, %d, %d)\n",
+                --          Ccolor.x, Ccolor.y, Ccolor.z,
+                --          Acolor.x, Acolor.y, Acolor.z,
+                --          Bcolor.x, Bcolor.y, Bcolor.z)
+
+                dgemm(ABlock, BBlock, CBlock)
+
+                if filled_blocks[Ccolor].nz <= 0 then
+                  filled_blocks[Ccolor].nz = filled_blocks[Acolor].nz*filled_blocks[Bcolor].nz
+                  filled_blocks[Ccolor].filled = 0
+                end
+
               end
             end
           end
