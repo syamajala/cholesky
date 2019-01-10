@@ -87,11 +87,11 @@ def find_file(line, directory=""):
     blocks = list(it.chain.from_iterable(blocks))
 
     if "POTRF" in line:
-        op = "potrf_lvl%d_a%d%d_fill0.mtx" % (lvl, *blocks)
+        op = "potrf_lvl%d_a%d%d.mtx" % (lvl, *blocks)
     elif "TRSM" in line:
-        op = "trsm_lvl%d_a%d%d_b%d%d_fill0.mtx" % (lvl, *blocks)
+        op = "trsm_lvl%d_a%d%d_b%d%d.mtx" % (lvl, *blocks)
     elif "GEMM" in line:
-        op = "gemm_lvl%d_a%d%d_b%d%d_c%d%d_fill0.mtx" % (lvl, *blocks)
+        op = "gemm_lvl%d_a%d%d_b%d%d_c%d%d.mtx" % (lvl, *blocks)
 
     return os.path.join(directory, op)
 

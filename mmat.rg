@@ -152,15 +152,15 @@ do
   c.fclose(matrix_file)
 end
 
-terra gen_filename(level:int, Ax:int, Ay:int, Bx:int, By:int, Cx:int, Cy:int, operation:rawstring, mm:bool, filled:bool, output_dir:rawstring)
+terra gen_filename(level:int, Ax:int, Ay:int, Bx:int, By:int, Cx:int, Cy:int, operation:rawstring, mm:bool, output_dir:rawstring)
   var filename:int8[1024]
 
   if operation == "POTRF" then
-    c.sprintf(filename, "%s/potrf_lvl%d_a%d%d_fill%d", output_dir, level, Ax, Ay, filled)
+    c.sprintf(filename, "%s/potrf_lvl%d_a%d%d", output_dir, level, Ax, Ay)
   elseif operation == "TRSM" then
-    c.sprintf(filename, "%s/trsm_lvl%d_a%d%d_b%d%d_fill%d", output_dir, level, Ax, Ay, Bx, By, filled)
+    c.sprintf(filename, "%s/trsm_lvl%d_a%d%d_b%d%d", output_dir, level, Ax, Ay, Bx, By)
   elseif operation == "GEMM" then
-    c.sprintf(filename, "%s/gemm_lvl%d_a%d%d_b%d%d_c%d%d_fill%d", output_dir, level, Ax, Ay, Bx, By, Cx, Cy, filled)
+    c.sprintf(filename, "%s/gemm_lvl%d_a%d%d_b%d%d_c%d%d", output_dir, level, Ax, Ay, Bx, By, Cx, Cy)
   end
 
   var ext:int8[5]
@@ -179,24 +179,24 @@ end
 
 
 task write_blocks(mat: region(ispace(int2d), double), mat_part: partition(disjoint, mat, ispace(int2d)),
-                  level:int, A:int2d, B:int2d, C:int2d, operation:rawstring, banner:MMatBanner, filled:bool, output_dir:rawstring)
+                  level:int, A:int2d, B:int2d, C:int2d, operation:rawstring, banner:MMatBanner, output_dir:rawstring)
 where
   reads(mat)
 do
-  var matrix_filename:regentlib.string = gen_filename(level, A.x, A.y, B.x, B.y, C.x, C.y, operation, true, filled, output_dir)
+  var matrix_filename:regentlib.string = gen_filename(level, A.x, A.y, B.x, B.y, C.x, C.y, operation, true, output_dir)
   write_matrix(mat, mat_part, matrix_filename, banner)
 
-  var block_filename = gen_filename(level, A.x, A.y, B.x, B.y, C.x, C.y, operation, false, filled, output_dir)
+  var block_filename = gen_filename(level, A.x, A.y, B.x, B.y, C.x, C.y, operation, false, output_dir)
   var file = c.fopen(block_filename, 'w')
 
   if operation == "POTRF" then
-    c.fprintf(file, "Level: %d POTRF A=(%d, %d) Fill: %d\n", level, A.x, A.y, filled)
+    c.fprintf(file, "Level: %d POTRF A=(%d, %d)\n", level, A.x, A.y)
   elseif operation == "TRSM" then
-    c.fprintf(file, "Level: %d TRSM A=(%d, %d) B=(%d, %d) Fill: %d\n",
-              level, A.x, A.y, B.x, B.y, filled)
+    c.fprintf(file, "Level: %d TRSM A=(%d, %d) B=(%d, %d)\n",
+              level, A.x, A.y, B.x, B.y)
   elseif operation == "GEMM" then
-    c.fprintf(file, "Level: %d GEMM A=(%d, %d) B=(%d, %d) C=(%d, %d) Fill: %d\n",
-              level, A.x, A.y, B.x, B.y, C.x, C.y, filled)
+    c.fprintf(file, "Level: %d GEMM A=(%d, %d) B=(%d, %d) C=(%d, %d)\n",
+              level, A.x, A.y, B.x, B.y, C.x, C.y)
   end
 
   for color in mat_part.colors do
@@ -226,8 +226,8 @@ end
 
 
 __demand(__inline)
-task partition_separator(block_color:int2d, interval:int, clusters:&&&int,
-                         block:region(ispace(int2d), double), debug:bool)
+task partition_separator(block_coloring:c.legion_domain_point_coloring_t, block_color:int2d, block_bounds:rect2d,
+                         interval:int, clusters:&&&int, debug:bool)
   var row_sep = block_color.x
   var row_cluster = clusters[row_sep]
   var row_cluster_size = row_cluster[interval][0]
@@ -235,9 +235,7 @@ task partition_separator(block_color:int2d, interval:int, clusters:&&&int,
   var col_sep = block_color.y
   var col_cluster = clusters[col_sep]
   var col_cluster_size = col_cluster[interval][0]
-  var prev_lo = block.bounds.lo
-
-  var block_coloring = c.legion_domain_point_coloring_create()
+  var prev_lo = block_bounds.lo
 
   if debug then
     c.printf("\t\tPartitioning (%d, %d) Cluster: %d Rows: %d Cols: %d\n",
@@ -283,17 +281,13 @@ task partition_separator(block_color:int2d, interval:int, clusters:&&&int,
 
       prev_lo = prev_lo + int2d{0, bottom-top}
     end
-    prev_lo = int2d{prev_lo.x + right-left, block.bounds.lo.y}
+
+    prev_lo = int2d{prev_lo.x + right-left, block_bounds.lo.y}
 
     if debug then
       c.printf("\n")
     end
   end
-
-  var colors = ispace(int3d, {1, 1, (row_cluster_size-1)*(col_cluster_size-1)}, {row_sep, col_sep, 0})
-  var part = partition(disjoint, block, block_coloring, colors)
-  c.legion_domain_point_coloring_destroy(block_coloring)
-  return part
 end
 
 __demand(__inline)
@@ -387,7 +381,7 @@ task merge_filled_blocks(filled_blocks:region(ispace(int3d), Filled), num_separa
 where
   reads writes(filled_blocks)
 do
-  var max_int_size = clusters[num_separators][0][0]
+  var max_int_size = clusters[num_separators][0][0]-1
   var blocks = region(ispace(int3d, {num_separators, num_separators, max_int_size*max_int_size}, {1, 1, 0}), Filled)
   copy(filled_blocks, blocks)
 
@@ -462,6 +456,7 @@ task main()
   var b_file = ""
   var solution_file = ""
   var factor_file = ""
+  var permuted_matrix_file = ""
   var debug_path = ""
   var debug = false
 
@@ -474,6 +469,8 @@ task main()
       clusters_file = args.argv[i+1]
     elseif c.strcmp(args.argv[i], "-m") == 0 then
       factor_file = args.argv[i+1]
+    elseif c.strcmp(args.argv[i], "-p") == 0 then
+      permuted_matrix_file = args.argv[i+1]
     elseif c.strcmp(args.argv[i], "-o") == 0 then
       solution_file = args.argv[i+1]
     elseif c.strcmp(args.argv[i], "-b") == 0 then
@@ -557,15 +554,16 @@ task main()
   var mat_part = partition(disjoint, mat, coloring, colors)
   c.legion_domain_point_coloring_destroy(coloring)
 
+  var nz = 0
   var interval = 0
-  var max_int_size = clusters[num_separators][0][0]
+  var max_int_size = clusters[num_separators][0][0]-1
   var filled_blocks = region(ispace(int3d, {num_separators, num_separators, max_int_size*max_int_size}, {1, 1, 0}), Filled)
   fill(filled_blocks.nz, -1)
   fill(filled_blocks.filled, 1)
 
-  var nz = 0
-
   for level = levels-1, -1, -1 do
+
+    var block_coloring = c.legion_domain_point_coloring_create()
 
     -- partition here
     for lvl = 0, level+1 do
@@ -573,30 +571,40 @@ task main()
         var row = tree[lvl][sep_idx]
         -- c.printf("Partitioning: %d %d\n", row, row)
         var block_color = int2d{row, row}
-        var block = mat_part[block_color]
-        var block_part = partition_separator(block_color, interval, clusters, block, debug)
-
-        if interval == 0 then
-          for color in block_part.colors do
-            nz += fill_block(block_part[color], color, block.bounds.lo, separators, banner.N, filled_blocks, debug)
-          end
-        end
+        var block_bounds = mat_part[block_color].bounds
+        partition_separator(block_coloring, block_color, block_bounds, interval, clusters, debug)
 
         for clvl = lvl+1, level+1 do
           for csep_idx = [int](sep_idx*math.pow(2, clvl-lvl)), [int]((sep_idx+1)*math.pow(2, clvl-lvl)) do
             var col = tree[clvl][csep_idx]
             -- c.printf("Partitioning: %d %d\n", row, col)
             var block_color = int2d{row, col}
-            var block = mat_part[block_color]
-            var block_part = partition_separator(block_color, interval, clusters, block, debug)
-
-            if interval == 0 then
-              for color in block_part.colors do
-                nz += fill_block(block_part[color], color, block.bounds.lo, separators, banner.N, filled_blocks, debug)
-              end
-            end
+            var block_bounds = mat_part[block_color].bounds
+            partition_separator(block_coloring, block_color, block_bounds, interval, clusters, debug)
           end
         end
+      end
+    end
+
+    max_int_size = clusters[num_separators][interval][0]-1
+    var sep_colors = ispace(int3d, {num_separators, num_separators, max_int_size*max_int_size}, {1, 1, 0})
+    var sep_part = partition(disjoint, mat, block_coloring, sep_colors)
+
+    if interval == 0 then
+      for color in sep_part.colors do
+        var block_color = int2d{color.x, color.y}
+        var block = mat_part[block_color]
+        if block.volume ~= 0 then
+          -- c.printf("Filling: %d %d %d\n", color.x, color.y, color.z)
+          nz += fill_block(sep_part[color], color, block.bounds.lo, separators, banner.N, filled_blocks, debug)
+        end
+      end
+
+      c.printf("Filled: %d Expected: %d\n", nz, banner.NZ)
+
+      if c.strcmp(permuted_matrix_file, '') ~= 0 then
+        c.printf("saving permuted matrix to: %s\n\n", permuted_matrix_file)
+        write_matrix(mat, mat_part, permuted_matrix_file, banner)
       end
     end
 
@@ -607,11 +615,10 @@ task main()
       var sep = tree[level][sep_idx]
       var pivot_color = int2d{sep, sep}
       var pivot = mat_part[pivot_color]
-      var pivot_part = partition_separator(pivot_color, interval, clusters, pivot, debug)
       var filled_pivot = find_color_space(pivot_color, interval, clusters, filled_ispace)
 
       for color in filled_pivot do
-        dpotrf(pivot_part[color])
+        dpotrf(sep_part[color])
       end
 
       if debug then
@@ -621,11 +628,8 @@ task main()
                  level, sep, sep, sizeA.x, sizeA.y,
                  pivot.bounds.lo.x, pivot.bounds.lo.y, pivot.bounds.hi.x, pivot.bounds.hi.y)
 
-        write_blocks(mat, mat_part, level, pivot_color, int2d{0, 0}, int2d{0, 0}, "POTRF", banner, false, debug_path)
+        write_blocks(mat, mat_part, level, pivot_color, int2d{0, 0}, int2d{0, 0}, "POTRF", banner, debug_path)
       end
-
-      -- we should make an empty partition and accumulate the partitions we make during the TRSM by taking the union
-      -- so we can reuse them when we do the GEMM, but right now we just partition twice
 
       var par_idx = sep_idx
       for par_level = level-1, -1, -1 do
@@ -633,16 +637,17 @@ task main()
         par_idx = par_idx/2
         var par_sep = tree[par_level][par_idx]
         var off_diag_color = int2d{par_sep, sep}
-        var off_diag = mat_part[off_diag_color]
-        var off_diag_part = partition_separator(off_diag_color, interval, clusters, off_diag, debug)
         var filled_off_diag = find_color_space(off_diag_color, interval, clusters, filled_ispace)
 
-        for color in filled_off_diag do
-          dtrsm(pivot, off_diag_part[color])
+        for pcolor in filled_pivot do
+          for ocolor in filled_off_diag do
+            dtrsm(sep_part[pcolor], sep_part[ocolor])
+          end
         end
 
         if debug then
           var sizeA = pivot.bounds.hi - pivot.bounds.lo + {1, 1}
+          var off_diag = mat_part[off_diag_color]
           var sizeB = off_diag.bounds.hi - off_diag.bounds.lo + {1, 1}
 
           c.printf("\tLevel: %d TRSM A=(%d, %d) B=(%d, %d)\n\tSizeA: %dx%d Lo: %d %d Hi: %d %d SizeB: %dx%d Lo: %d %d Hi: %d %d\n\n",
@@ -650,7 +655,7 @@ task main()
                    sizeA.x, sizeA.y, pivot.bounds.lo.x, pivot.bounds.lo.y, pivot.bounds.hi.x, pivot.bounds.hi.y,
                    sizeB.x, sizeB.y, off_diag.bounds.lo.x, off_diag.bounds.lo.y, off_diag.bounds.hi.x, off_diag.bounds.hi.y)
 
-          write_blocks(mat, mat_part, par_level, pivot_color, off_diag_color, int2d{0, 0}, "TRSM", banner, false, debug_path)
+          write_blocks(mat, mat_part, par_level, pivot_color, off_diag_color, int2d{0, 0}, "TRSM", banner, debug_path)
         end
       end
 
@@ -667,19 +672,6 @@ task main()
           var B_color = int2d{par_sep, sep}
           var C_color = int2d{grandpar_sep, par_sep}
 
-          var A = mat_part[A_color] -- ex: 16, 28
-          var B = mat_part[B_color] -- ex: 16, 24
-          var C = mat_part[C_color] -- ex: 24, 28
-
-          -- partition A (should be done in TRSM above) ex: 16, 28
-          var A_part = partition_separator(A_color, interval, clusters, A, debug)
-
-          -- partition B (should be done in TRSM above) ex: 16, 24
-          var B_part = partition_separator(B_color, interval, clusters, B, debug)
-
-          -- partition C  ex: 24, 28
-          var C_part = partition_separator(C_color, interval, clusters, C, debug)
-
           var col_cluster_size = clusters[par_sep][interval][0]
           -- c.printf("\t\tA Vol: %d B Vol: %d C Vol: %d\n\n", A_colors.volume, B_colors.volume, C_colors.volume)
 
@@ -689,16 +681,16 @@ task main()
           if grandpar_sep == par_sep then
             for Acolor in filled_A_colors do
               var row = Acolor.z
-              var ABlock = A_part[Acolor]
+              var ABlock = sep_part[Acolor]
 
               for Bcolor in filled_B_colors do
                 var col = Bcolor.z
 
                 var Ccolor = int3d{grandpar_sep, par_sep, row*(col_cluster_size-1)+col}
-                var CBlock = C_part[Ccolor]
+                var CBlock = sep_part[Ccolor]
 
                 if col < row then
-                  var BBlock = A_part[Bcolor]
+                  var BBlock = sep_part[Bcolor]
 
                   -- c.printf("\t\tGEMM C=(%d, %d, %d) A=(%d, %d, %d) B=(%d, %d, %d)\n",
                   --          Ccolor.x, Ccolor.y, Ccolor.z,
@@ -730,15 +722,15 @@ task main()
             end
           else
             for Acolor in filled_A_colors do
-              var ABlock = A_part[Acolor]
+              var ABlock = sep_part[Acolor]
               var row = Acolor.z
 
               for Bcolor in filled_B_colors do
-                var BBlock = B_part[Bcolor]
+                var BBlock = sep_part[Bcolor]
                 var col = Bcolor.z
 
                 var Ccolor = int3d{grandpar_sep, par_sep, row*(col_cluster_size-1)+col}
-                var CBlock = C_part[Ccolor]
+                var CBlock = sep_part[Ccolor]
 
                 -- c.printf("\t\tGEMM C=(%d, %d, %d) A=(%d, %d, %d) B=(%d, %d, %d)\n",
                 --          Ccolor.x, Ccolor.y, Ccolor.z,
@@ -757,6 +749,9 @@ task main()
           end
 
           if debug then
+            var A = mat_part[A_color]
+            var B = mat_part[B_color]
+            var C = mat_part[C_color]
             var sizeA = A.bounds.hi - A.bounds.lo + {1, 1}
             var sizeB = B.bounds.hi - B.bounds.lo + {1, 1}
             var sizeC = C.bounds.hi - C.bounds.lo + {1, 1}
@@ -771,7 +766,7 @@ task main()
                      sizeC.x, sizeC.y, C.bounds.lo.x, C.bounds.lo.y, C.bounds.hi.x, C.bounds.hi.y)
 
 
-            write_blocks(mat, mat_part, grandpar_level, A_color, B_color, C_color, "GEMM", banner, false, debug_path)
+            write_blocks(mat, mat_part, grandpar_level, A_color, B_color, C_color, "GEMM", banner, debug_path)
           end
           grandpar_idx = grandpar_idx/2
         end
@@ -781,7 +776,6 @@ task main()
     merge_filled_blocks(filled_blocks, num_separators, interval, clusters)
   end
 
-  c.printf("Filled: %d Expected: %d\n", nz, banner.NZ)
   c.printf("Done factoring.\n")
 
   if c.strcmp(factor_file, '') ~= 0 then
