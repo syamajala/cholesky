@@ -61,6 +61,7 @@ terra dpotrf_terra(rect: rect2d, m:int,
   return info
 end
 
+__demand(__leaf)
 task dpotrf(rA : region(ispace(int2d), double))
 where reads writes(rA)
 do
@@ -82,6 +83,7 @@ terra dtrsm_terra(rectA:rect2d, rectB:rect2d, m:int, n:int,
                    rawA.ptr, rawA.offset, rawB.ptr, rawB.offset)
 end
 
+__demand(__leaf)
 task dtrsm(rA : region(ispace(int2d), double),
            rB : region(ispace(int2d), double))
 where reads(rA), reads writes(rB)
@@ -117,6 +119,7 @@ terra dgemm_terra(rectA:rect2d, rectB:rect2d, rectC:rect2d,
                    beta, rawC.ptr, rawC.offset)
 end
 
+__demand(__leaf)
 task dgemm(rA : region(ispace(int2d), double),
            rB : region(ispace(int2d), double),
            rC : region(ispace(int2d), double))
@@ -159,7 +162,7 @@ terra dsyrk_terra(rectA:rect2d, rectC:rect2d,
 
 end
 
-
+__demand(__leaf)
 task dsyrk(rA : region(ispace(int2d), double),
            rC : region(ispace(int2d), double))
 where reads(rA), reduces -(rC)
@@ -193,6 +196,7 @@ terra dtrsv_terra(rectA:rect2d, rectB:rect1d, uplo:int, trans:int, n:int,
 
 end
 
+__demand(__leaf)
 task dtrsv(rA : region(ispace(int2d), double), rB : region(ispace(int1d), double), uplo:int, trans:int)
 where reads(rA), reads writes(rB)
 do
@@ -227,6 +231,7 @@ terra dgemv_terra(rectA:rect2d, rectX:rect1d, rectY:rect1d, trans:int, m:int, n:
 
 end
 
+__demand(__leaf)
 task dgemv(rA : region(ispace(int2d), double),
            rX : region(ispace(int1d), double),
            rY : region(ispace(int1d), double),

@@ -23,7 +23,6 @@ local math = terralib.includec("math.h")
 -- print(c.fopen)
 
 local blas = require("blas")
-
 terralib.linklibrary("libcblas.so")
 local cblas = terralib.includec("cblas.h")
 
@@ -290,7 +289,7 @@ task partition_separator(block_coloring:c.legion_domain_point_coloring_t, block_
   end
 end
 
-__demand(__inline)
+--__demand(__inline)
 task fill_block(block:region(ispace(int2d), double), color:int3d, part_lo:int2d, separators:&&int, cols:int,
                 filled_blocks:region(ispace(int3d), Filled), debug:bool)
 where
@@ -375,13 +374,11 @@ do
   return nz
 end
 
-
 __demand(__inline)
-task merge_filled_blocks(filled_blocks:region(ispace(int3d), Filled), num_separators:int, interval:int, clusters:&&&int)
+task merge_filled_blocks(filled_blocks:region(ispace(int3d), Filled), max_int_size:int, num_separators:int, interval:int, clusters:&&&int)
 where
   reads writes(filled_blocks)
 do
-  var max_int_size = clusters[num_separators][0][0]-1
   var blocks = region(ispace(int3d, {num_separators, num_separators, max_int_size*max_int_size}, {1, 1, 0}), Filled)
   copy(filled_blocks, blocks)
 
@@ -444,6 +441,24 @@ task find_color_space(color:int2d, interval:int, clusters:&&&int, filled_ispace:
 
   var colors = ispace(int3d, {1, 1, rows*cols}, {color.x, color.y, 0})
   return filled_ispace & colors
+end
+
+
+__demand(__inline)
+task find_max_int_sizes(num_separators:int, num_intervals:int, clusters:&&&int)
+  var max_int_sizes = region(ispace(int1d, num_intervals), int)
+
+  for i = 0, num_intervals do
+    var max_int_size = 0
+    for j = 1, num_separators+1 do
+      if clusters[0][0][j]-1 >= i  then
+        max_int_size = max(clusters[j][i][0]-1, max_int_size)
+      end
+    end
+    max_int_sizes[int1d{i}] = max_int_size
+  end
+
+  return max_int_sizes
 end
 
 
@@ -556,7 +571,8 @@ task main()
 
   var nz = 0
   var interval = 0
-  var max_int_size = clusters[num_separators][0][0]-1
+  var max_int_sizes = find_max_int_sizes(num_separators, levels, clusters)
+  var max_int_size = max_int_sizes[int1d{0}]
   var filled_blocks = region(ispace(int3d, {num_separators, num_separators, max_int_size*max_int_size}, {1, 1, 0}), Filled)
   fill(filled_blocks.nz, -1)
   fill(filled_blocks.filled, 1)
@@ -586,7 +602,7 @@ task main()
       end
     end
 
-    max_int_size = clusters[num_separators][interval][0]-1
+    max_int_size = max_int_sizes[int1d{interval}]
     var sep_colors = ispace(int3d, {num_separators, num_separators, max_int_size*max_int_size}, {1, 1, 0})
     var sep_part = partition(disjoint, mat, block_coloring, sep_colors)
 
@@ -594,9 +610,10 @@ task main()
       for color in sep_part.colors do
         var block_color = int2d{color.x, color.y}
         var block = mat_part[block_color]
-        if block.volume ~= 0 then
+        var pblock = sep_part[color]
+        if pblock.volume ~= 0 then
           -- c.printf("Filling: %d %d %d\n", color.x, color.y, color.z)
-          nz += fill_block(sep_part[color], color, block.bounds.lo, separators, banner.N, filled_blocks, debug)
+          nz += fill_block(pblock, color, block.bounds.lo, separators, banner.N, filled_blocks, debug)
         end
       end
 
@@ -608,6 +625,8 @@ task main()
       end
     end
 
+    regentlib.assert(nz == banner.NZ, "Missing entries.")
+
     var filled_part = partition(filled_blocks.filled, ispace(int1d, 2))
     var filled_ispace = filled_part[0].ispace
 
@@ -617,6 +636,7 @@ task main()
       var pivot = mat_part[pivot_color]
       var filled_pivot = find_color_space(pivot_color, interval, clusters, filled_ispace)
 
+      __demand(__parallel)
       for color in filled_pivot do
         dpotrf(sep_part[color])
       end
@@ -773,7 +793,7 @@ task main()
       end
     end
     interval += 1
-    merge_filled_blocks(filled_blocks, num_separators, interval, clusters)
+    merge_filled_blocks(filled_blocks, max_int_sizes[int1d{0}], num_separators, interval, clusters)
   end
 
   c.printf("Done factoring.\n")
