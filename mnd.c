@@ -204,13 +204,13 @@ void add_entry(uint64_t idx, double val)
   e->idx = idx;
   e->val = val;
 
-  HASH_ADD_INT( entries, idx, e);
+  HASH_ADD(hh, entries, idx, sizeof(uint64_t), e);
 }
 
 double find_entry(uint64_t idx)
 {
   Entry *e;
-  HASH_FIND_INT(entries, &idx, e);
+  HASH_FIND(hh, entries, &idx, sizeof(uint64_t), e);
   if(e)
     return e->val;
 

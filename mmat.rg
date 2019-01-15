@@ -68,7 +68,7 @@ struct MatrixEntry {
   Val:double
 }
 
-terra read_matrix(file:&c.FILE, nz:int, cols:int)
+terra read_matrix(file:&c.FILE, nz:int, cols:uint64)
   for i = 0, nz do
     var entry:MatrixEntry
     c.fscanf(file, "%d %d %lg\n", &(entry.I), &(entry.J), &(entry.Val))
@@ -290,7 +290,7 @@ task partition_separator(block_coloring:c.legion_domain_point_coloring_t, block_
 end
 
 --__demand(__inline)
-task fill_block(block:region(ispace(int2d), double), color:int3d, part_lo:int2d, separators:&&int, cols:int,
+task fill_block(block:region(ispace(int2d), double), color:int3d, part_lo:int2d, separators:&&int, cols:uint64,
                 filled_blocks:region(ispace(int3d), Filled), debug:bool)
 where
   reads writes(block, filled_blocks)
@@ -322,14 +322,14 @@ do
         var eidx:uint64 = idxi*cols+idxj
         var entry = mnd.find_entry(eidx)
         if entry ~= 0 then
-          -- c.printf("Filling Diagonal: %d %d I: %d J: %d key: %d Entry: %0.2f\n", idx.x, idx.y, idxi, idxj, eidx, entry)
+          -- c.printf("Filling Diagonal: %d %d I: %d J: %d key: %lu Entry: %0.2f\n", idx.x, idx.y, idxi, idxj, eidx, entry)
           block[idx] = entry
           nz += 1
         else
           var eidx:uint64 = idxj*cols+idxi
           var entry = mnd.find_entry(eidx)
           if entry ~= 0 then
-            -- c.printf("Filling Diagonal: %d %d I: %d J: %d key: %d Entry: %0.2f\n", idx.x, idx.y, idxi, idxj, eidx, entry)
+            -- c.printf("Filling Diagonal: %d %d I: %d J: %d key: %lu Entry: %0.2f\n", idx.x, idx.y, idxi, idxj, eidx, entry)
             block[idx] = entry
             nz += 1
           end
@@ -338,14 +338,14 @@ do
         var eidx:uint64 = idxi*cols+idxj
         var entry = mnd.find_entry(eidx)
         if entry ~= 0 then
-          -- c.printf("Filling Off-Diagonal: %d %d I: %d J: %d key: %d Entry: %0.2f\n", idx.x, idx.y, idxi, idxj, eidx, entry)
+          -- c.printf("Filling Off-Diagonal: %d %d I: %d J: %d key: %lu Entry: %0.2f\n", idx.x, idx.y, idxi, idxj, eidx, entry)
           block[idx] = entry
           nz += 1
         else
           var eidx:uint64 = idxj*cols+idxi
           var entry = mnd.find_entry(eidx)
           if entry ~= 0 then
-            -- c.printf("Filling Off-Diagonal: %d %d I: %d J: %d key: %d Entry: %0.2f\n", idx.x, idx.y, idxi, idxj, eidx, entry)
+            -- c.printf("Filling Off-Diagonal: %d %d I: %d J: %d key: %lu Entry: %0.2f\n", idx.x, idx.y, idxi, idxj, eidx, entry)
             block[idx] = entry
             nz += 1
           end
@@ -511,7 +511,8 @@ task main()
 
   var mat = region(ispace(int2d, {x = banner.M, y = banner.N}), double)
 
-  read_matrix(matrix_file, banner.NZ, banner.N)
+  var cols:uint64 = [uint64](banner.N)
+  read_matrix(matrix_file, banner.NZ, cols)
   c.fclose(matrix_file)
 
   var coloring = c.legion_domain_point_coloring_create()
@@ -609,7 +610,7 @@ task main()
         var pblock = sep_part[color]
         if pblock.volume ~= 0 then
           -- c.printf("Filling: %d %d %d\n", color.x, color.y, color.z)
-          nz += fill_block(pblock, color, block.bounds.lo, separators, banner.N, filled_blocks, debug)
+          nz += fill_block(pblock, color, block.bounds.lo, separators, cols, filled_blocks, debug)
           regentlib.assert(nz <= banner.NZ, "Mismatch in number of entries.")
         end
       end
