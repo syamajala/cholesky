@@ -19,13 +19,8 @@
 #include <stdlib.h>
 #include "uthash.h"
 
-typedef struct Key {
-  unsigned int i;
-  unsigned int j;
-} Key;
-
 typedef struct Entry {
-  Key key;
+  uint64_t idx;
   double val;
   UT_hash_handle hh;
 } Entry;
@@ -37,8 +32,8 @@ void print_clusters(int ***clusters, int num_separators);
 int** build_separator_tree(int **separators);
 int** read_separators(char *file, size_t len);
 void print_separators(int **separators);
-void add_entry(unsigned int i, unsigned int j, double val);
-double find_entry(unsigned int i , unsigned j);
+void add_entry(uint64_t idx, double val);
+double find_entry(uint64_t idx);
 void delete_entries();
 
 #endif

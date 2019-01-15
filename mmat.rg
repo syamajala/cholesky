@@ -68,14 +68,14 @@ struct MatrixEntry {
   Val:double
 }
 
-
 terra read_matrix(file:&c.FILE, nz:int, cols:int)
   for i = 0, nz do
     var entry:MatrixEntry
     c.fscanf(file, "%d %d %lg\n", &(entry.I), &(entry.J), &(entry.Val))
     entry.I = entry.I - 1
     entry.J = entry.J - 1
-    mnd.add_entry(entry.I, entry.J, entry.Val)
+    var eidx:uint64 = entry.I*cols+entry.J
+    mnd.add_entry(eidx, entry.Val)
   end
 end
 
@@ -319,41 +319,38 @@ do
       var idx = lo + {i, j} - offset
 
       if color.x == color.y and j <= i then
-        -- c.printf("Filling Diagonal: %d %d I: %d J: %d key: %d ", idx.x, idx.y, idxi, idxj, idxi*cols+idxj)
-
-        var entry = mnd.find_entry(idxi, idxj)
+        var eidx:uint64 = idxi*cols+idxj
+        var entry = mnd.find_entry(eidx)
         if entry ~= 0 then
-          -- c.printf("Entry: %0.2f", entry)
+          -- c.printf("Filling Diagonal: %d %d I: %d J: %d key: %d Entry: %0.2f\n", idx.x, idx.y, idxi, idxj, eidx, entry)
           block[idx] = entry
           nz += 1
         else
-          entry = mnd.find_entry(idxj, idxi)
+          var eidx:uint64 = idxj*cols+idxi
+          var entry = mnd.find_entry(eidx)
           if entry ~= 0 then
-            -- c.printf("Entry: %0.2f", entry)
+            -- c.printf("Filling Diagonal: %d %d I: %d J: %d key: %d Entry: %0.2f\n", idx.x, idx.y, idxi, idxj, eidx, entry)
             block[idx] = entry
             nz += 1
           end
         end
-
       elseif color.x ~= color.y then
-        -- c.printf("Filling Off-Diagonal: %d %d I: %d J: %d key: %d ", idx.x, idx.y, idxi, idxj, idxi*cols+idxj)
-
-        var entry = mnd.find_entry(idxi, idxj)
+        var eidx:uint64 = idxi*cols+idxj
+        var entry = mnd.find_entry(eidx)
         if entry ~= 0 then
-          -- c.printf("Entry: %0.2f", entry)
+          -- c.printf("Filling Off-Diagonal: %d %d I: %d J: %d key: %d Entry: %0.2f\n", idx.x, idx.y, idxi, idxj, eidx, entry)
           block[idx] = entry
           nz += 1
         else
-          entry = mnd.find_entry(idxj, idxi)
+          var eidx:uint64 = idxj*cols+idxi
+          var entry = mnd.find_entry(eidx)
           if entry ~= 0 then
-            -- c.printf("Entry: %0.2f", entry)
+            -- c.printf("Filling Off-Diagonal: %d %d I: %d J: %d key: %d Entry: %0.2f\n", idx.x, idx.y, idxi, idxj, eidx, entry)
             block[idx] = entry
             nz += 1
           end
         end
-
       end
-      -- c.printf("\n")
     end
   end
 
@@ -581,7 +578,6 @@ task main()
 
     var block_coloring = c.legion_domain_point_coloring_create()
 
-    -- partition here
     for lvl = 0, level+1 do
       for sep_idx = 0, [int](math.pow(2, lvl)) do
         var row = tree[lvl][sep_idx]
@@ -614,6 +610,7 @@ task main()
         if pblock.volume ~= 0 then
           -- c.printf("Filling: %d %d %d\n", color.x, color.y, color.z)
           nz += fill_block(pblock, color, block.bounds.lo, separators, banner.N, filled_blocks, debug)
+          regentlib.assert(nz <= banner.NZ, "Mismatch in number of entries.")
         end
       end
 
@@ -623,9 +620,9 @@ task main()
         c.printf("saving permuted matrix to: %s\n\n", permuted_matrix_file)
         write_matrix(mat, mat_part, permuted_matrix_file, banner)
       end
-    end
 
-    regentlib.assert(nz == banner.NZ, "Missing entries.")
+      regentlib.assert(nz == banner.NZ, "Mismatch in number of entries.")
+    end
 
     var filled_part = partition(filled_blocks.filled, ispace(int1d, 2))
     var filled_ispace = filled_part[0].ispace
