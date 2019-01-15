@@ -75,7 +75,7 @@ terra read_matrix(file:&c.FILE, nz:int, cols:int)
     c.fscanf(file, "%d %d %lg\n", &(entry.I), &(entry.J), &(entry.Val))
     entry.I = entry.I - 1
     entry.J = entry.J - 1
-    mnd.add_entry(entry.I*cols+entry.J, entry.Val)
+    mnd.add_entry(entry.I, entry.J, entry.Val)
   end
 end
 
@@ -321,13 +321,13 @@ do
       if color.x == color.y and j <= i then
         -- c.printf("Filling Diagonal: %d %d I: %d J: %d key: %d ", idx.x, idx.y, idxi, idxj, idxi*cols+idxj)
 
-        var entry = mnd.find_entry(idxi*cols+idxj)
+        var entry = mnd.find_entry(idxi, idxj)
         if entry ~= 0 then
           -- c.printf("Entry: %0.2f", entry)
           block[idx] = entry
           nz += 1
         else
-          entry = mnd.find_entry(idxj*cols+idxi)
+          entry = mnd.find_entry(idxj, idxi)
           if entry ~= 0 then
             -- c.printf("Entry: %0.2f", entry)
             block[idx] = entry
@@ -338,13 +338,13 @@ do
       elseif color.x ~= color.y then
         -- c.printf("Filling Off-Diagonal: %d %d I: %d J: %d key: %d ", idx.x, idx.y, idxi, idxj, idxi*cols+idxj)
 
-        var entry = mnd.find_entry(idxi*cols+idxj)
+        var entry = mnd.find_entry(idxi, idxj)
         if entry ~= 0 then
           -- c.printf("Entry: %0.2f", entry)
           block[idx] = entry
           nz += 1
         else
-          entry = mnd.find_entry(idxj*cols+idxi)
+          entry = mnd.find_entry(idxj, idxi)
           if entry ~= 0 then
             -- c.printf("Entry: %0.2f", entry)
             block[idx] = entry

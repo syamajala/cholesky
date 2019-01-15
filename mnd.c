@@ -198,21 +198,26 @@ void print_clusters(int ***clusters, int num_separators)
   }
 }
 
-void add_entry(int idx, double val)
+void add_entry(unsigned int i, unsigned int j, double val)
 {
   Entry *e = malloc(sizeof(Entry));
-  e->idx = idx;
+  e->key.i = i;
+  e->key.j = j;
   e->val = val;
 
-  HASH_ADD_INT( entries, idx, e);
+  HASH_ADD( hh, entries, key, sizeof(Key), e);
 }
 
-double find_entry(int idx)
+double find_entry(unsigned int i, unsigned int j)
 {
-  Entry *e;
-  HASH_FIND_INT(entries, &idx, e);
-  if(e)
-    return e->val;
+  Entry k, *v;
+
+  memset(&k, 0, sizeof(Entry));
+  k.key.i = i;
+  k.key.j = j;
+  HASH_FIND(hh, entries, &k.key, sizeof(Key), v);
+  if(v)
+    return v->val;
 
   return 0;
 }
