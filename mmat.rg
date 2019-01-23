@@ -224,6 +224,10 @@ do
 end
 
 task partition_matrix(tree:&&int, separators:&&int, mat:region(ispace(int2d), double), pprev_size:int2d, debug:bool)
+where
+  writes(mat)
+do
+
   var coloring = c.legion_domain_point_coloring_create()
   var levels = separators[0][0]
   var num_separators = separators[0][1]
@@ -569,7 +573,7 @@ do
   end
 end
 
---__demand(__inner)
+__demand(__inner)
 task main()
   var args = c.legion_runtime_get_input_args()
 
@@ -627,58 +631,7 @@ task main()
   c.fclose(matrix_file)
 
   var prev_size = int2d{x = banner.M-1, y = banner.N-1}
-  -- var mat_part = partition_matrix(tree, separators, mat, prev_size, debug)
-
-  --- remove this
-  var coloring = c.legion_domain_point_coloring_create()
-  var separator_bounds = region(ispace(int1d, num_separators, 1), rect2d)
-
-  for level = 0, levels do
-    for sep_idx = 0, [int](math.pow(2, level)) do
-      var sep = tree[level][sep_idx]
-      var size = separators[sep][0]
-      var bounds = rect2d { prev_size - {size-1, size-1}, prev_size }
-
-      separator_bounds[sep] = bounds
-
-      if debug then
-        c.printf("level: %d sep: %d size: %d ", level, sep, size)
-        c.printf("prev_size: %d %d bounds.lo: %d %d, bounds.hi: %d %d vol: %d\n",
-                 prev_size.x, prev_size.y,
-                 bounds.lo.x, bounds.lo.y,
-                 bounds.hi.x, bounds.hi.y,
-                 c.legion_domain_get_volume(c.legion_domain_from_rect_2d(bounds)))
-      end
-
-      var color:int2d = {x = sep, y = sep}
-      c.legion_domain_point_coloring_color_domain(coloring, color:to_domain_point(), c.legion_domain_from_rect_2d(bounds))
-      prev_size = prev_size - {size, size}
-
-      var par_idx:int = sep_idx
-      for par_level = level-1, -1, -1 do
-        par_idx = par_idx/2
-        var par_sep = tree[par_level][par_idx]
-        var par_size = separators[par_sep][0]-1
-        var par_bounds = separator_bounds[par_sep]
-
-        var child_bounds = rect2d{ {x = par_bounds.lo.x, y = bounds.lo.y},
-                                   {x = par_bounds.hi.x, y = bounds.hi.y } }
-
-        if debug then
-          c.printf("block: %d %d bounds.lo: %d %d bounds.hi: %d %d\n", sep, par_sep,
-                   child_bounds.lo.x, child_bounds.lo.y, child_bounds.hi.x, child_bounds.hi.y)
-        end
-
-        var color:int2d = {par_sep, sep}
-        c.legion_domain_point_coloring_color_domain(coloring, color:to_domain_point(), c.legion_domain_from_rect_2d(child_bounds))
-      end
-    end
-  end
-
-  var colors = ispace(int2d, {num_separators, num_separators}, {1, 1})
-  var mat_part = partition(disjoint, mat, coloring, colors)
-  c.legion_domain_point_coloring_destroy(coloring)
-  --- remove this
+  var mat_part = partition_matrix(tree, separators, mat, prev_size, debug)
 
   var nz = 0
   var interval = 0
@@ -902,11 +855,12 @@ task main()
 
   if c.strcmp(factor_file, '') ~= 0 then
     c.printf("saving factored matrix to: %s\n\n", factor_file)
-    write_blocks(mat, mat_part, 0, int2d{num_separators, num_separators}, int2d{0, 0}, int2d{0, 0}, "POTRF", banner, ".")
     write_matrix(mat, mat_part, factor_file, banner)
   end
 
   if c.strcmp(b_file, '') == 0 then
+    __fence(__execution, __block)
+
     for i = 0, num_separators+1 do
       c.free(separators[i])
     end
@@ -1039,6 +993,7 @@ task main()
     write_solution(solution_file, X)
   end
 
+  __fence(__execution, __block)
   for i = 0, num_separators+1 do
     c.free(separators[i])
   end
