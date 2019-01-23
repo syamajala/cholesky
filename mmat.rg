@@ -97,6 +97,7 @@ terra read_b(file:rawstring, n:int)
   return entries
 end
 
+__demand(__leaf)
 task write_matrix(mat: region(ispace(int2d), double),
                   mat_part: partition(disjoint, mat, ispace(int2d)),
                   file:regentlib.string,
@@ -151,7 +152,7 @@ do
   c.fclose(matrix_file)
 end
 
-terra gen_filename(level:int, Ax:int, Ay:int, Bx:int, By:int, Cx:int, Cy:int, operation:rawstring, mm:bool, output_dir:rawstring)
+terra gen_filename(level:int, Ax:int, Ay:int, Bx:int, By:int, Cx:int, Cy:int, operation:rawstring, mm:bool, output_dir:regentlib.string)
   var filename:int8[1024]
 
   if operation == "POTRF" then
@@ -176,9 +177,8 @@ terra gen_filename(level:int, Ax:int, Ay:int, Bx:int, By:int, Cx:int, Cy:int, op
   return f
 end
 
-
 task write_blocks(mat: region(ispace(int2d), double), mat_part: partition(disjoint, mat, ispace(int2d)),
-                  level:int, A:int2d, B:int2d, C:int2d, operation:rawstring, banner:MMatBanner, output_dir:rawstring)
+                  level:int, A:int2d, B:int2d, C:int2d, operation:rawstring, banner:MMatBanner, output_dir:regentlib.string)
 where
   reads(mat)
 do
@@ -223,6 +223,60 @@ do
   end
 end
 
+task partition_matrix(tree:&&int, separators:&&int, mat:region(ispace(int2d), double), pprev_size:int2d, debug:bool)
+  var coloring = c.legion_domain_point_coloring_create()
+  var levels = separators[0][0]
+  var num_separators = separators[0][1]
+  var prev_size = pprev_size
+  var separator_bounds = region(ispace(int1d, num_separators, 1), rect2d)
+
+  for level = 0, levels do
+    for sep_idx = 0, [int](math.pow(2, level)) do
+      var sep = tree[level][sep_idx]
+      var size = separators[sep][0]
+      var bounds = rect2d { prev_size - {size-1, size-1}, prev_size }
+
+      separator_bounds[sep] = bounds
+
+      if debug then
+        c.printf("level: %d sep: %d size: %d ", level, sep, size)
+        c.printf("prev_size: %d %d bounds.lo: %d %d, bounds.hi: %d %d vol: %d\n",
+                 prev_size.x, prev_size.y,
+                 bounds.lo.x, bounds.lo.y,
+                 bounds.hi.x, bounds.hi.y,
+                 c.legion_domain_get_volume(c.legion_domain_from_rect_2d(bounds)))
+      end
+
+      var color:int2d = {x = sep, y = sep}
+      c.legion_domain_point_coloring_color_domain(coloring, color:to_domain_point(), c.legion_domain_from_rect_2d(bounds))
+      prev_size = prev_size - {size, size}
+
+      var par_idx:int = sep_idx
+      for par_level = level-1, -1, -1 do
+        par_idx = par_idx/2
+        var par_sep = tree[par_level][par_idx]
+        var par_size = separators[par_sep][0]-1
+        var par_bounds = separator_bounds[par_sep]
+
+        var child_bounds = rect2d{ {x = par_bounds.lo.x, y = bounds.lo.y},
+                                   {x = par_bounds.hi.x, y = bounds.hi.y } }
+
+        if debug then
+          c.printf("block: %d %d bounds.lo: %d %d bounds.hi: %d %d\n", sep, par_sep,
+                   child_bounds.lo.x, child_bounds.lo.y, child_bounds.hi.x, child_bounds.hi.y)
+        end
+
+        var color:int2d = {par_sep, sep}
+        c.legion_domain_point_coloring_color_domain(coloring, color:to_domain_point(), c.legion_domain_from_rect_2d(child_bounds))
+      end
+    end
+  end
+
+  var colors = ispace(int2d, {num_separators, num_separators}, {1, 1})
+  var mat_part = partition(disjoint, mat, coloring, colors)
+  c.legion_domain_point_coloring_destroy(coloring)
+  return mat_part
+end
 
 __demand(__inline)
 task partition_separator(block_coloring:c.legion_domain_point_coloring_t, block_color:int2d, block_bounds:rect2d,
@@ -371,7 +425,7 @@ do
   return nz
 end
 
-__demand(__inline)
+--__demand(__inline)
 task merge_filled_blocks(filled_blocks:region(ispace(int3d), Filled), max_int_size:int, num_separators:int, interval:int, clusters:&&&int)
 where
   reads writes(filled_blocks)
@@ -428,10 +482,9 @@ do
   -- for block in filled_blocks.ispace do
   --   c.printf("Merged: %d %d %d Interval: %d NZ: %d\n", block.x, block.y, block.z, interval, filled_blocks[block].nz)
   -- end
-
 end
 
-__demand(__inline)
+--__demand(__inline)
 task find_color_space(color:int2d, interval:int, clusters:&&&int, filled_ispace:ispace(int3d))
   var rows = clusters[color.x][interval][0]-1
   var cols = clusters[color.y][interval][0]-1
@@ -440,25 +493,83 @@ task find_color_space(color:int2d, interval:int, clusters:&&&int, filled_ispace:
   return filled_ispace & colors
 end
 
+-- __demand(__inline)
+-- task find_max_int_size(num_separators:int, num_intervals:int, clusters:&&&int)
 
-__demand(__inline)
-task find_max_int_sizes(num_separators:int, num_intervals:int, clusters:&&&int)
-  var max_int_sizes = region(ispace(int1d, num_intervals), int)
+--   var max_int_sizes = region(ispace(int1d, num_intervals), int)
 
-  for i = 0, num_intervals do
-    var max_int_size = 0
-    for j = 1, num_separators+1 do
-      if clusters[0][0][j]-1 >= i  then
-        max_int_size = max(clusters[j][i][0]-1, max_int_size)
-      end
-    end
-    max_int_sizes[int1d{i}] = max_int_size
+--   for i = 0, num_intervals do
+--     var max_int_size = 0
+--     for j = 1, num_separators+1 do
+--       if clusters[0][0][j]-1 >= i  then
+--         max_int_size = max(clusters[j][i][0]-1, max_int_size)
+--       end
+--     end
+--     max_int_sizes[int1d{i}] = max_int_size
+--   end
+
+--   return max_int_sizes
+-- end
+
+__demand(__leaf)
+task fill_b(separators:&&int, Bentries:&double, BP:region(ispace(int1d), double), Bcolor:int1d)
+where
+  reads writes(BP)
+do
+  var ib:int = [int](Bcolor)
+  var sep = separators[ib]
+  var sep_size = sep[0]
+
+  for i = 0, sep_size do
+    var idxi = sep[i+1]
+    BP[BP.bounds.lo + i] = Bentries[idxi]
   end
-
-  return max_int_sizes
 end
 
+__demand(__leaf)
+task unpermute_solution(separators:&&int, X:region(ispace(int1d), double), B:region(ispace(int1d), double))
+where
+  reads(B), reads writes(X)
+do
+  var num_separators = separators[0][1]
+  var j = 0
+  for sep = 1, num_separators+1 do
+    var size = separators[sep][0]
+    for i = 1, size+1 do
+      var idxi = separators[sep][i]
+      X[idxi] = B[j]
+      j += 1
+    end
+  end
+end
 
+__demand(__leaf)
+task write_solution(solution_file:regentlib.string, X:region(ispace(int1d), double))
+where
+  reads(X)
+do
+  c.printf("Saving solution to: %s\n", solution_file)
+  var solution = c.fopen(solution_file, 'w')
+
+  for i in X.ispace do
+    c.fprintf(solution, "%0.5g\n", X[i])
+  end
+
+  c.fclose(solution)
+end
+
+__demand(__leaf)
+task update_filled_blocks(filled_blocks:region(ispace(int3d), Filled), Acolor:int3d, Bcolor:int3d, Ccolor:int3d)
+where
+  reads writes(filled_blocks)
+do
+  if filled_blocks[Ccolor].nz <= 0 then
+    filled_blocks[Ccolor].nz = filled_blocks[Acolor].nz*filled_blocks[Bcolor].nz
+    filled_blocks[Ccolor].filled = 0
+  end
+end
+
+--__demand(__inner)
 task main()
   var args = c.legion_runtime_get_input_args()
 
@@ -515,9 +626,11 @@ task main()
   read_matrix(matrix_file, banner.NZ, cols)
   c.fclose(matrix_file)
 
-  var coloring = c.legion_domain_point_coloring_create()
   var prev_size = int2d{x = banner.M-1, y = banner.N-1}
+  -- var mat_part = partition_matrix(tree, separators, mat, prev_size, debug)
 
+  --- remove this
+  var coloring = c.legion_domain_point_coloring_create()
   var separator_bounds = region(ispace(int1d, num_separators, 1), rect2d)
 
   for level = 0, levels do
@@ -528,14 +641,14 @@ task main()
 
       separator_bounds[sep] = bounds
 
-      -- if debug then
-      --   c.printf("level: %d sep: %d size: %d ", level, sep, size)
-      --   c.printf("prev_size: %d %d bounds.lo: %d %d, bounds.hi: %d %d vol: %d\n",
-      --            prev_size.x, prev_size.y,
-      --            bounds.lo.x, bounds.lo.y,
-      --            bounds.hi.x, bounds.hi.y,
-      --            c.legion_domain_get_volume(c.legion_domain_from_rect_2d(bounds)))
-      -- end
+      if debug then
+        c.printf("level: %d sep: %d size: %d ", level, sep, size)
+        c.printf("prev_size: %d %d bounds.lo: %d %d, bounds.hi: %d %d vol: %d\n",
+                 prev_size.x, prev_size.y,
+                 bounds.lo.x, bounds.lo.y,
+                 bounds.hi.x, bounds.hi.y,
+                 c.legion_domain_get_volume(c.legion_domain_from_rect_2d(bounds)))
+      end
 
       var color:int2d = {x = sep, y = sep}
       c.legion_domain_point_coloring_color_domain(coloring, color:to_domain_point(), c.legion_domain_from_rect_2d(bounds))
@@ -551,14 +664,13 @@ task main()
         var child_bounds = rect2d{ {x = par_bounds.lo.x, y = bounds.lo.y},
                                    {x = par_bounds.hi.x, y = bounds.hi.y } }
 
-        -- if debug then
-        --   c.printf("block: %d %d bounds.lo: %d %d bounds.hi: %d %d\n", sep, par_sep,
-        --            child_bounds.lo.x, child_bounds.lo.y, child_bounds.hi.x, child_bounds.hi.y)
-        -- end
+        if debug then
+          c.printf("block: %d %d bounds.lo: %d %d bounds.hi: %d %d\n", sep, par_sep,
+                   child_bounds.lo.x, child_bounds.lo.y, child_bounds.hi.x, child_bounds.hi.y)
+        end
 
         var color:int2d = {par_sep, sep}
         c.legion_domain_point_coloring_color_domain(coloring, color:to_domain_point(), c.legion_domain_from_rect_2d(child_bounds))
-
       end
     end
   end
@@ -566,11 +678,17 @@ task main()
   var colors = ispace(int2d, {num_separators, num_separators}, {1, 1})
   var mat_part = partition(disjoint, mat, coloring, colors)
   c.legion_domain_point_coloring_destroy(coloring)
+  --- remove this
 
   var nz = 0
   var interval = 0
-  var max_int_sizes = find_max_int_sizes(num_separators, levels, clusters)
-  var max_int_size = max_int_sizes[int1d{0}]
+
+  -- find_max_int_sizes()
+  var max_int_size = 0
+  for i = 1, num_separators+1 do
+      max_int_size = max(clusters[i][0][0]-1, max_int_size)
+  end
+
   var filled_blocks = region(ispace(int3d, {num_separators, num_separators, max_int_size*max_int_size}, {1, 1, 0}), Filled)
   fill(filled_blocks.nz, -1)
   fill(filled_blocks.filled, 1)
@@ -599,7 +717,7 @@ task main()
       end
     end
 
-    max_int_size = max_int_sizes[int1d{interval}]
+    --max_int_size = max_int_sizes[int1d{interval}]
     var sep_colors = ispace(int3d, {num_separators, num_separators, max_int_size*max_int_size}, {1, 1, 0})
     var sep_part = partition(disjoint, mat, block_coloring, sep_colors)
 
@@ -678,6 +796,7 @@ task main()
       end
 
       par_idx = sep_idx
+
       for par_level = level-1, -1, -1 do
         par_idx = par_idx/2
         var par_sep = tree[par_level][par_idx]
@@ -691,7 +810,6 @@ task main()
           var C_color = int2d{grandpar_sep, par_sep}
 
           var col_cluster_size = clusters[par_sep][interval][0]
-          -- c.printf("\t\tA Vol: %d B Vol: %d C Vol: %d\n\n", A_colors.volume, B_colors.volume, C_colors.volume)
 
           var filled_A_colors = find_color_space(A_color, interval, clusters, filled_ispace)
           var filled_B_colors = find_color_space(B_color, interval, clusters, filled_ispace)
@@ -716,11 +834,7 @@ task main()
                   --          Bcolor.x, Bcolor.y, Bcolor.z)
 
                   dgemm(ABlock, BBlock, CBlock)
-
-                  if filled_blocks[Ccolor].nz <= 0 then
-                    filled_blocks[Ccolor].nz = filled_blocks[Acolor].nz*filled_blocks[Bcolor].nz
-                    filled_blocks[Ccolor].filled = 0
-                  end
+                  update_filled_blocks(filled_blocks, Acolor, Bcolor, Ccolor)
 
                 elseif col == row then
 
@@ -729,12 +843,7 @@ task main()
                   --          Acolor.x, Acolor.y, Acolor.z)
 
                   dsyrk(ABlock, CBlock)
-
-                  if filled_blocks[Ccolor].nz <= 1 then
-                    filled_blocks[Ccolor].nz = filled_blocks[Acolor].nz*filled_blocks[Ccolor].nz
-                    filled_blocks[Ccolor].filled = 0
-                  end
-
+                  update_filled_blocks(filled_blocks, Acolor, Ccolor, Ccolor)
                 end
               end
             end
@@ -756,11 +865,7 @@ task main()
                 --          Bcolor.x, Bcolor.y, Bcolor.z)
 
                 dgemm(ABlock, BBlock, CBlock)
-
-                if filled_blocks[Ccolor].nz <= 0 then
-                  filled_blocks[Ccolor].nz = filled_blocks[Acolor].nz*filled_blocks[Bcolor].nz
-                  filled_blocks[Ccolor].filled = 0
-                end
+                update_filled_blocks(filled_blocks, Acolor, Bcolor, Ccolor)
 
               end
             end
@@ -783,7 +888,6 @@ task main()
                      sizeB.x, sizeB.y, B.bounds.lo.x, B.bounds.lo.y, B.bounds.hi.x, B.bounds.hi.y,
                      sizeC.x, sizeC.y, C.bounds.lo.x, C.bounds.lo.y, C.bounds.hi.x, C.bounds.hi.y)
 
-
             write_blocks(mat, mat_part, grandpar_level, A_color, B_color, C_color, "GEMM", banner, debug_path)
           end
           grandpar_idx = grandpar_idx/2
@@ -791,13 +895,14 @@ task main()
       end
     end
     interval += 1
-    merge_filled_blocks(filled_blocks, max_int_sizes[int1d{0}], num_separators, interval, clusters)
+    merge_filled_blocks(filled_blocks, max_int_size, num_separators, interval, clusters)
   end
 
   c.printf("Done factoring.\n")
 
   if c.strcmp(factor_file, '') ~= 0 then
     c.printf("saving factored matrix to: %s\n\n", factor_file)
+    write_blocks(mat, mat_part, 0, int2d{num_separators, num_separators}, int2d{0, 0}, int2d{0, 0}, "POTRF", banner, ".")
     write_matrix(mat, mat_part, factor_file, banner)
   end
 
@@ -840,16 +945,7 @@ task main()
 
   for Bcolor in Bcolors do
     var part = Bpart[Bcolor]
-
-    var lo = part.bounds
-    var ib:int = [int](Bcolor)
-    var sep = separators[ib]
-    var sep_size = sep[0]
-
-    for i = 0, sep_size do
-      var idxi = sep[i+1]
-      part[part.bounds.lo + i] = Bentries[idxi]
-    end
+    fill_b(separators, Bentries, part, Bcolor)
   end
 
   c.printf("Forward Substitution\n")
@@ -937,25 +1033,10 @@ task main()
 
   c.printf("Done solve.\n")
 
-  var j = 0
-  for sep = 1, num_separators+1 do
-    var size = separators[sep][0]
-    for i = 1, size+1 do
-      var idxi = separators[sep][i]
-      X[idxi] = B[j]
-      j += 1
-    end
-  end
+  unpermute_solution(separators, X, B)
 
   if c.strcmp(solution_file, '') ~= 0 then
-    c.printf("Saving solution to: %s\n", solution_file)
-    var solution = c.fopen(solution_file, 'w')
-
-    for i = 0, banner.N do
-      c.fprintf(solution, "%0.5g\n", X[i])
-    end
-
-    c.fclose(solution)
+    write_solution(solution_file, X)
   end
 
   for i = 0, num_separators+1 do
