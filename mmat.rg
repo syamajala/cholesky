@@ -682,7 +682,7 @@ task main()
         if pblock.volume ~= 0 then
           -- c.printf("Filling: %d %d %d\n", color.x, color.y, color.z)
           nz += fill_block(pblock, color, block.bounds.lo, separators, cols, filled_blocks, debug)
-          regentlib.assert(nz <= banner.NZ, "Mismatch in number of entries.")
+          --regentlib.assert(nz <= banner.NZ, "Mismatch in number of entries.")
         end
       end
 
@@ -693,7 +693,7 @@ task main()
         write_matrix(mat, mat_part, permuted_matrix_file, banner)
       end
 
-      regentlib.assert(nz == banner.NZ, "Mismatch in number of entries.")
+      --regentlib.assert(nz == banner.NZ, "Mismatch in number of entries.")
     end
 
     var filled_part = partition(filled_blocks.filled, ispace(int1d, 2))
@@ -702,7 +702,6 @@ task main()
     for sep_idx = 0, [int](math.pow(2, level)) do
       var sep = tree[level][sep_idx]
       var pivot_color = int2d{sep, sep}
-      var pivot = mat_part[pivot_color]
       var filled_pivot = find_color_space(pivot_color, interval, clusters, filled_ispace)
 
       __demand(__parallel)
@@ -711,6 +710,7 @@ task main()
       end
 
       if debug then
+        var pivot = mat_part[pivot_color]
         var sizeA = pivot.bounds.hi - pivot.bounds.lo + {1, 1}
 
         c.printf("Level: %d POTRF A=(%d, %d)\nSize: %dx%d Lo: %d %d Hi: %d %d\n\n",
@@ -719,6 +719,12 @@ task main()
 
         write_blocks(mat, mat_part, level, pivot_color, int2d{0, 0}, int2d{0, 0}, "POTRF", banner, debug_path)
       end
+    end
+
+    for sep_idx = 0, [int](math.pow(2, level)) do
+      var sep = tree[level][sep_idx]
+      var pivot_color = int2d{sep, sep}
+      var filled_pivot = find_color_space(pivot_color, interval, clusters, filled_ispace)
 
       var par_idx = sep_idx
       for par_level = level-1, -1, -1 do
@@ -735,6 +741,7 @@ task main()
         end
 
         if debug then
+          var pivot = mat_part[pivot_color]
           var sizeA = pivot.bounds.hi - pivot.bounds.lo + {1, 1}
           var off_diag = mat_part[off_diag_color]
           var sizeB = off_diag.bounds.hi - off_diag.bounds.lo + {1, 1}
@@ -747,8 +754,11 @@ task main()
           write_blocks(mat, mat_part, par_level, pivot_color, off_diag_color, int2d{0, 0}, "TRSM", banner, debug_path)
         end
       end
+    end
 
-      par_idx = sep_idx
+    for sep_idx = 0, [int](math.pow(2, level)) do
+      var sep = tree[level][sep_idx]
+      var par_idx = sep_idx
 
       for par_level = level-1, -1, -1 do
         par_idx = par_idx/2
