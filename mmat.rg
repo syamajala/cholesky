@@ -28,7 +28,8 @@ local cblas = terralib.includec("cblas.h")
 
 fspace Filled {
   nz:int,
-  filled:int1d
+  filled:int1d,
+  color:int2d
 }
 
 struct MMatBanner {
@@ -224,9 +225,6 @@ do
 end
 
 task partition_matrix(tree:&&int, separators:&&int, mat:region(ispace(int2d), double), pprev_size:int2d, debug:bool)
-where
-  writes(mat)
-do
 
   var coloring = c.legion_domain_point_coloring_create()
   var levels = separators[0][0]
@@ -301,25 +299,25 @@ task partition_separator(block_coloring:c.legion_domain_point_coloring_t, block_
 
   for row = 1, row_cluster_size do
 
-    var left = row_cluster[interval][row]
-    var right = row_cluster[interval][row+1]
+    var top = row_cluster[interval][row]
+    var bottom = row_cluster[interval][row+1]
 
     for i = interval-1, -1, -1 do
-      left = row_cluster[i][left+1]
-      right = row_cluster[i][right+1]
+      top = row_cluster[i][top+1]
+      bottom = row_cluster[i][bottom+1]
     end
 
     for col = 1, col_cluster_size do
 
-      var top = col_cluster[interval][col]
-      var bottom = col_cluster[interval][col+1]
+      var left = col_cluster[interval][col]
+      var right = col_cluster[interval][col+1]
 
       for i = interval-1, -1, -1 do
-        top = col_cluster[i][top+1]
-        bottom = col_cluster[i][bottom+1]
+        left = col_cluster[i][left+1]
+        right = col_cluster[i][right+1]
       end
 
-      var part_size = int2d{x = right - left - 1, y = bottom - top - 1}
+      var part_size = int2d{x = bottom - top - 1, y = right - left - 1}
       var color:int3d = {x = row_sep, y = col_sep, z = (row-1)*(col_cluster_size-1)+(col-1)}
       var bounds = rect2d { prev_lo, prev_lo + part_size }
       var size = bounds.hi - bounds.lo + {1, 1}
@@ -336,10 +334,10 @@ task partition_separator(block_coloring:c.legion_domain_point_coloring_t, block_
                  c.legion_domain_get_volume(c.legion_domain_from_rect_2d(bounds)))
       end
 
-      prev_lo = prev_lo + int2d{0, bottom-top}
+      prev_lo = prev_lo + int2d{0, right-left}
     end
 
-    prev_lo = int2d{prev_lo.x + right-left, block_bounds.lo.y}
+    prev_lo = int2d{prev_lo.x + bottom-top, block_bounds.lo.y}
 
     if debug then
       c.printf("\n")
@@ -348,82 +346,101 @@ task partition_separator(block_coloring:c.legion_domain_point_coloring_t, block_
 end
 
 --__demand(__inline)
-task fill_block(block:region(ispace(int2d), double), color:int3d, part_lo:int2d, separators:&&int, cols:uint64,
+task fill_block(block:region(ispace(int2d), double), color:int2d, separators:&&int, clusters:&&&int, cols:uint64,
                 filled_blocks:region(ispace(int3d), Filled), debug:bool)
 where
   reads writes(block, filled_blocks)
 do
-  var row_sep = separators[color.x]
-  var col_sep = separators[color.y]
+  var row_sep = color.x
+  var row_dofs = separators[row_sep]
+  var row_size = row_dofs[0]
+  var row_cluster = clusters[row_sep][0]
+  var row_cluster_size = row_cluster[0]
 
-  var row_size = row_sep[0]
-  var col_size = col_sep[0]
+  var col_sep = color.y
+  var col_dofs = separators[col_sep]
+  var col_size = col_dofs[0]
+  var col_cluster = clusters[col_sep][0]
+  var col_cluster_size = col_cluster[0]
 
-  var lo = block.bounds.lo
-  var hi = block.bounds.hi
-  var offset = block.bounds.lo - part_lo
-  var bounds = hi - lo + offset + {1, 1}
-  var nz = 0
-  -- c.printf("Filling: %d %d %d at %d %d From: %d %d To: %d %d\n",
-  --          color.x, color.y, color.z, lo.x, lo.y, offset.x, offset.y, bounds.x, bounds.y)
+  -- c.printf("Filling: %d %d From: %d %d To: %d %d\n",
+  --          color.x, color.y, block.bounds.lo.x, block.bounds.lo.y, block.bounds.hi.x, block.bounds.hi.y)
 
   fill(block, 0)
+  var nz = 0
+  var block_idx = block.bounds.lo
 
-  for i = offset.x, bounds.x do
-    var idxi = row_sep[i+1]
+  for col = 1, col_cluster_size do
+    var left = col_cluster[col]
+    var right = col_cluster[col+1]
+    var col_bound = right - left
 
-    for j = offset.y, bounds.y do
-      var idxj = col_sep[j+1]
-      var idx = lo + {i, j} - offset
+    for row = 1, row_cluster_size do
+      var top = row_cluster[row]
+      var bottom = row_cluster[row+1]
+      var row_bound = bottom - top
 
-      if color.x == color.y and j <= i then
-        var eidx:uint64 = idxi*cols+idxj
-        var entry = mnd.find_entry(eidx)
-        if entry ~= 0 then
-          -- c.printf("Filling Diagonal: %d %d I: %d J: %d key: %lu Entry: %0.2f\n", idx.x, idx.y, idxi, idxj, eidx, entry)
-          block[idx] = entry
-          nz += 1
-        else
-          var eidx:uint64 = idxj*cols+idxi
-          var entry = mnd.find_entry(eidx)
-          if entry ~= 0 then
-            -- c.printf("Filling Diagonal: %d %d I: %d J: %d key: %lu Entry: %0.2f\n", idx.x, idx.y, idxi, idxj, eidx, entry)
-            block[idx] = entry
-            nz += 1
+      var z = (row-1)*(col_cluster_size-1)+(col-1)
+
+      var nnz = 0
+      -- c.printf("Bounds: %d %d %d row: %d %d col: %d %d\n", row_sep, col_sep, z, top, bottom, left, right)
+      var cidx = int2d{0, 0}
+      for i = top, bottom do
+        for j = left, right do
+          var idxi = row_dofs[i+1]
+          var idxj = col_dofs[j+1]
+
+          if idxj > idxi then
+            var t = idxi
+            idxi = idxj
+            idxj = t
           end
+
+          var eidx:uint64 = idxi*cols+idxj
+          var entry = mnd.find_entry(eidx)
+          var idx = block_idx + cidx
+          if row_sep == col_sep and idx.y <= idx.x then
+            -- c.printf("Block: %d %d %d Filling Diagonal: %d %d I: %d J: %d key: %lu Entry: %0.2f\n",
+            --          row_sep, col_sep, z, idx.x, idx.y, idxi, idxj, eidx, entry)
+
+            if entry ~= 0 then
+              block[idx] = entry
+              nnz += 1
+            end
+          elseif row_sep ~= col_sep then
+            -- c.printf("Block: %d %d %d Filling Off-Diagonal: %d %d I: %d J: %d key: %lu Entry: %0.2f\n",
+            --          row_sep, col_sep, z, idx.x, idx.y, idxi, idxj, eidx, entry)
+
+            if entry ~= 0 then
+              block[idx] = entry
+              nnz += 1
+            end
+          end
+          cidx = cidx + {0, 1}
         end
-      elseif color.x ~= color.y then
-        var eidx:uint64 = idxi*cols+idxj
-        var entry = mnd.find_entry(eidx)
-        if entry ~= 0 then
-          -- c.printf("Filling Off-Diagonal: %d %d I: %d J: %d key: %lu Entry: %0.2f\n", idx.x, idx.y, idxi, idxj, eidx, entry)
-          block[idx] = entry
-          nz += 1
+        cidx = {cidx.x + 1, 0}
+      end
+      block_idx = block_idx + {row_bound, 0}
+
+      var color = int3d{x = row_sep, y = col_sep, z = z}
+      filled_blocks[color].nz = nnz
+
+      if nnz > 0 then
+        filled_blocks[color].filled = 0
+      end
+
+      if debug then
+        if nnz > 0 then
+          c.printf("Filled: %d %d %d with %d non-zeros\n", color.x, color.y, color.z, nnz)
         else
-          var eidx:uint64 = idxj*cols+idxi
-          var entry = mnd.find_entry(eidx)
-          if entry ~= 0 then
-            -- c.printf("Filling Off-Diagonal: %d %d I: %d J: %d key: %lu Entry: %0.2f\n", idx.x, idx.y, idxi, idxj, eidx, entry)
-            block[idx] = entry
-            nz += 1
-          end
+          c.printf("Block %d %d %d empty\n", color.x, color.y, color.z)
         end
       end
+
+      nz += nnz
     end
-  end
 
-  filled_blocks[color].nz = nz
-
-  if nz > 0 then
-    filled_blocks[color].filled = 0
-  end
-
-  if debug then
-    if nz > 0 then
-      c.printf("Filled: %d %d %d with %d non-zeros\n", color.x, color.y, color.z, nz)
-    else
-      c.printf("Block %d %d %d empty\n", color.x, color.y, color.z)
-    end
+    block_idx = {block.bounds.lo.x, block_idx.y+col_bound}
   end
 
   return nz
@@ -459,16 +476,18 @@ do
 
       for row = 1, row_cluster_size do
 
-        var left = row_cluster[row]
-        var right = row_cluster[row+1]
+        var top = row_cluster[row]
+        var bottom = row_cluster[row+1]
 
         for col = 1, col_cluster_size do
-          var top = col_cluster[col]
-          var bottom = col_cluster[col+1]
+
+          var left = col_cluster[col]
+          var right = col_cluster[col+1]
           var new_id = int3d{row_sep, col_sep, (row-1)*(col_cluster_size-1)+(col-1)}
           -- c.printf("New Id: %d %d %d -> ", new_id.x, new_id.y, new_id.z)
-          for i = left, right do
-            for j = top, bottom do
+
+          for i = top, bottom do
+            for j = left, right do
               var old_id = int3d{row_sep, col_sep, i*prev_cols+j}
               -- c.printf("%d ", old_id.z)
               filled_blocks[new_id].nz += blocks[old_id].nz
@@ -496,24 +515,6 @@ task find_color_space(color:int2d, interval:int, clusters:&&&int, filled_ispace:
   var colors = ispace(int3d, {1, 1, rows*cols}, {color.x, color.y, 0})
   return filled_ispace & colors
 end
-
--- __demand(__inline)
--- task find_max_int_size(num_separators:int, num_intervals:int, clusters:&&&int)
-
---   var max_int_sizes = region(ispace(int1d, num_intervals), int)
-
---   for i = 0, num_intervals do
---     var max_int_size = 0
---     for j = 1, num_separators+1 do
---       if clusters[0][0][j]-1 >= i  then
---         max_int_size = max(clusters[j][i][0]-1, max_int_size)
---       end
---     end
---     max_int_sizes[int1d{i}] = max_int_size
---   end
-
---   return max_int_sizes
--- end
 
 __demand(__leaf)
 task fill_b(separators:&&int, Bentries:&double, BP:region(ispace(int1d), double), Bcolor:int1d)
@@ -571,6 +572,22 @@ do
     filled_blocks[Ccolor].nz = filled_blocks[Acolor].nz*filled_blocks[Bcolor].nz
     filled_blocks[Ccolor].filled = 0
   end
+end
+
+task partition_filled_blocks(num_separators:int, max_int_size:int, filled_blocks:region(ispace(int3d), Filled))
+where
+  reads writes(filled_blocks)
+do
+  fill(filled_blocks.nz, -1)
+  fill(filled_blocks.filled, 1)
+
+  for i in filled_blocks.ispace do
+    filled_blocks[i].color = int2d{i.x, i.y}
+  end
+
+  var filled_block_part = partition(filled_blocks.color, ispace(int2d, {num_separators, num_separators}, {1, 1}))
+
+  return filled_block_part
 end
 
 __demand(__inner)
@@ -643,8 +660,7 @@ task main()
   end
 
   var filled_blocks = region(ispace(int3d, {num_separators, num_separators, max_int_size*max_int_size}, {1, 1, 0}), Filled)
-  fill(filled_blocks.nz, -1)
-  fill(filled_blocks.filled, 1)
+  var filled_block_part = partition_filled_blocks(num_separators, max_int_size, filled_blocks)
 
   for level = levels-1, -1, -1 do
 
@@ -675,17 +691,17 @@ task main()
     var sep_part = partition(disjoint, mat, block_coloring, sep_colors)
 
     if interval == 0 then
-      for color in sep_part.colors do
-        var block_color = int2d{color.x, color.y}
-        var block = mat_part[block_color]
-        var pblock = sep_part[color]
-        if pblock.volume ~= 0 then
-          -- c.printf("Filling: %d %d %d\n", color.x, color.y, color.z)
-          nz += fill_block(pblock, color, block.bounds.lo, separators, cols, filled_blocks, debug)
-          --regentlib.assert(nz <= banner.NZ, "Mismatch in number of entries.")
+      for color in mat_part.colors do
+        var block = mat_part[color]
+        if block.volume ~= 0 then
+          -- c.printf("Filling: %d %d\n", color.x, color.y)
+          var fpblock = filled_block_part[color]
+          nz += fill_block(block, color, separators, clusters, cols, fpblock, debug)
+          -- regentlib.assert(nz <= banner.NZ, "Mismatch in number of entries.")
         end
       end
 
+      c.printf("Done fill.\n")
       c.printf("Filled: %d Expected: %d\n", nz, banner.NZ)
 
       if c.strcmp(permuted_matrix_file, '') ~= 0 then
@@ -693,7 +709,7 @@ task main()
         write_matrix(mat, mat_part, permuted_matrix_file, banner)
       end
 
-      --regentlib.assert(nz == banner.NZ, "Mismatch in number of entries.")
+      regentlib.assert(nz == banner.NZ, "Mismatch in number of entries.")
     end
 
     var filled_part = partition(filled_blocks.filled, ispace(int1d, 2))
