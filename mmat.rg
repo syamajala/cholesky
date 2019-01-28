@@ -636,7 +636,8 @@ task main()
 
   var tree = mnd.build_separator_tree(separators)
 
-  var clusters = mnd.read_clusters(clusters_file, num_separators+1, 10, 50)
+  -- var clusters = mnd.read_clusters(clusters_file, num_separators+1, num_separators, num_separators)
+  var clusters = mnd.read_clusters2(clusters_file, 2048)
 
   c.printf("levels: %d\n", levels)
   c.printf("separators: %d\n", num_separators)
