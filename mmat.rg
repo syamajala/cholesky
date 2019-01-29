@@ -345,7 +345,7 @@ task partition_separator(block_coloring:c.legion_domain_point_coloring_t, block_
   end
 end
 
---__demand(__inline)
+__demand(__leaf)
 task fill_block(block:region(ispace(int2d), double), color:int2d, separators:&&int, clusters:&&&int, cols:uint64,
                 filled_blocks:region(ispace(int3d), Filled), debug:bool)
 where
@@ -366,7 +366,6 @@ do
   -- c.printf("Filling: %d %d From: %d %d To: %d %d\n",
   --          color.x, color.y, block.bounds.lo.x, block.bounds.lo.y, block.bounds.hi.x, block.bounds.hi.y)
 
-  fill(block, 0)
   var nz = 0
   var block_idx = block.bounds.lo
 
@@ -402,17 +401,19 @@ do
           if row_sep == col_sep and idx.y <= idx.x then
             -- c.printf("Block: %d %d %d Filling Diagonal: %d %d I: %d J: %d key: %lu Entry: %0.2f\n",
             --          row_sep, col_sep, z, idx.x, idx.y, idxi, idxj, eidx, entry)
+            block[idx] = entry
 
             if entry ~= 0 then
-              block[idx] = entry
               nnz += 1
             end
+          elseif row_sep == col_sep and idx.y > idx.x then
+            block[idx] = 0.0
           elseif row_sep ~= col_sep then
             -- c.printf("Block: %d %d %d Filling Off-Diagonal: %d %d I: %d J: %d key: %lu Entry: %0.2f\n",
             --          row_sep, col_sep, z, idx.x, idx.y, idxi, idxj, eidx, entry)
+            block[idx] = entry
 
             if entry ~= 0 then
-              block[idx] = entry
               nnz += 1
             end
           end
