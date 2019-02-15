@@ -286,7 +286,7 @@ task partition_matrix(tree:&&int, separators:&&int, mat:region(ispace(int2d), do
   return mat_part
 end
 
-
+__demand(__leaf)
 task partition_separator(cluster_bounds:region(ispace(int3d), Cluster), block_color:int2d, block_bounds:rect2d,
                          interval:int, clusters:&&&int, debug:bool)
 where
@@ -713,10 +713,6 @@ task main()
 
     var cpart = partition(cluster_bounds.cluster, cluster_bounds.ispace)
     var sep_part = image(mat, cpart, cluster_bounds.bounds)
-    var exit = true
-    if exit then
-      return
-    end
 
     if interval == 0 then
       for color in mat_part.colors do
