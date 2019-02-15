@@ -39,6 +39,12 @@ struct MMatBanner {
   typecode:mmio.MM_typecode
 }
 
+fspace Cluster {
+  cluster:int3d,
+  bounds:rect2d,
+  sep: int2d
+}
+
 terra read_matrix_banner(file:&c.FILE)
   var matcode : mmio.MM_typecode[1]
   var ret:int
@@ -280,9 +286,12 @@ task partition_matrix(tree:&&int, separators:&&int, mat:region(ispace(int2d), do
   return mat_part
 end
 
-__demand(__inline)
-task partition_separator(block_coloring:c.legion_domain_point_coloring_t, block_color:int2d, block_bounds:rect2d,
+
+task partition_separator(cluster_bounds:region(ispace(int3d), Cluster), block_color:int2d, block_bounds:rect2d,
                          interval:int, clusters:&&&int, debug:bool)
+where
+  reads writes(cluster_bounds.cluster, cluster_bounds.bounds)
+do
   var row_sep = block_color.x
   var row_cluster = clusters[row_sep]
   var row_cluster_size = row_cluster[interval][0]
@@ -322,8 +331,8 @@ task partition_separator(block_coloring:c.legion_domain_point_coloring_t, block_
       var bounds = rect2d { prev_lo, prev_lo + part_size }
       var size = bounds.hi - bounds.lo + {1, 1}
 
-      c.legion_domain_point_coloring_color_domain(block_coloring, color:to_domain_point(),
-                                                  c.legion_domain_from_rect_2d(bounds))
+      cluster_bounds[color].cluster = color
+      cluster_bounds[color].bounds = bounds
 
       if debug then
         c.printf("\t\tcolor: %d %d %d bounds.lo: %d %d, bounds.hi: %d %d size: %d %d vol: %d\n",
@@ -591,6 +600,18 @@ do
   return filled_block_part
 end
 
+task partition_cluster_bounds(cluster_bounds:region(ispace(int3d), Cluster), num_separators:int)
+where
+  reads writes(cluster_bounds.sep)
+do
+  for color in cluster_bounds.ispace do
+    cluster_bounds[color].sep = {color.x, color.y}
+  end
+
+  var cluster_part = partition(cluster_bounds.sep, ispace(int2d, {num_separators, num_separators}, {1, 1}))
+  return cluster_part
+end
+
 __demand(__inner)
 task main()
   var args = c.legion_runtime_get_input_args()
@@ -665,8 +686,8 @@ task main()
   var filled_block_part = partition_filled_blocks(num_separators, max_int_size, filled_blocks)
 
   for level = levels-1, -1, -1 do
-
-    var block_coloring = c.legion_domain_point_coloring_create()
+    var cluster_bounds = region(ispace(int3d, {num_separators, num_separators, max_int_size*max_int_size}, {1, 1, 0}), Cluster)
+    var cluster_bounds_part = partition_cluster_bounds(cluster_bounds, num_separators)
 
     for lvl = 0, level+1 do
       for sep_idx = 0, [int](math.pow(2, lvl)) do
@@ -674,7 +695,8 @@ task main()
         -- c.printf("Partitioning: %d %d\n", row, row)
         var block_color = int2d{row, row}
         var block_bounds = mat_part[block_color].bounds
-        partition_separator(block_coloring, block_color, block_bounds, interval, clusters, debug)
+        var cluster = cluster_bounds_part[block_color]
+        partition_separator(cluster, block_color, block_bounds, interval, clusters, debug)
 
         for clvl = lvl+1, level+1 do
           for csep_idx = [int](sep_idx*math.pow(2, clvl-lvl)), [int]((sep_idx+1)*math.pow(2, clvl-lvl)) do
@@ -682,15 +704,19 @@ task main()
             -- c.printf("Partitioning: %d %d\n", row, col)
             var block_color = int2d{row, col}
             var block_bounds = mat_part[block_color].bounds
-            partition_separator(block_coloring, block_color, block_bounds, interval, clusters, debug)
+            var cluster = cluster_bounds_part[block_color]
+            partition_separator(cluster, block_color, block_bounds, interval, clusters, debug)
           end
         end
       end
     end
 
-    --max_int_size = max_int_sizes[int1d{interval}]
-    var sep_colors = ispace(int3d, {num_separators, num_separators, max_int_size*max_int_size}, {1, 1, 0})
-    var sep_part = partition(disjoint, mat, block_coloring, sep_colors)
+    var cpart = partition(cluster_bounds.cluster, cluster_bounds.ispace)
+    var sep_part = image(mat, cpart, cluster_bounds.bounds)
+    var exit = true
+    if exit then
+      return
+    end
 
     if interval == 0 then
       for color in mat_part.colors do
