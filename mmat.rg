@@ -612,6 +612,30 @@ do
   return cluster_part
 end
 
+
+task partition_by_image_range(mat:region(ispace(int2d), double),
+                              cluster_bounds:region(ispace(int3d), Cluster),
+                              cluster_part:partition(disjoint, cluster_bounds, ispace(int3d)))
+where
+  reads(cluster_bounds.bounds)
+do
+  var fid = __fields(cluster_bounds)[0]
+
+  var ip = c.legion_index_partition_create_by_image_range(__runtime(),
+                                                          __context(),
+                                                          __raw(mat.ispace),
+                                                          __raw(cluster_part),
+                                                          __raw(cluster_bounds),
+                                                          fid,
+                                                          __raw(cluster_bounds.ispace),
+                                                          c.DISJOINT_KIND,
+                                                          -1)
+
+  var raw_part = c.legion_logical_partition_create(__runtime(), __context(), __raw(mat), ip)
+
+  return __import_partition(disjoint, mat, cluster_bounds.ispace, raw_part)
+end
+
 __demand(__inner)
 task main()
   var args = c.legion_runtime_get_input_args()
@@ -712,7 +736,8 @@ task main()
     end
 
     var cpart = partition(cluster_bounds.cluster, cluster_bounds.ispace)
-    var sep_part = image(mat, cpart, cluster_bounds.bounds)
+    var sep_part = partition_by_image_range(mat, cluster_bounds, cpart)
+    -- var sep_part = image(mat, cpart, cluster_bounds.bounds)
 
     if interval == 0 then
       for color in mat_part.colors do
