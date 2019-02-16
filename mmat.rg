@@ -290,8 +290,12 @@ __demand(__leaf)
 task partition_separator(cluster_bounds:region(ispace(int3d), Cluster), block_color:int2d, block_bounds:rect2d,
                          interval:int, clusters:&&&int, debug:bool)
 where
-  reads writes(cluster_bounds.cluster, cluster_bounds.bounds)
+  reads writes(cluster_bounds.bounds)
 do
+  for i in cluster_bounds do
+    cluster_bounds[i].bounds = rect2d{lo=int2d{-1, -1}, hi=int2d{-1, -1}}
+  end
+
   var row_sep = block_color.x
   var row_cluster = clusters[row_sep]
   var row_cluster_size = row_cluster[interval][0]
@@ -331,7 +335,6 @@ do
       var bounds = rect2d { prev_lo, prev_lo + part_size }
       var size = bounds.hi - bounds.lo + {1, 1}
 
-      cluster_bounds[color].cluster = color
       cluster_bounds[color].bounds = bounds
 
       if debug then
@@ -708,10 +711,10 @@ task main()
 
   var filled_blocks = region(ispace(int3d, {num_separators, num_separators, max_int_size*max_int_size}, {1, 1, 0}), Filled)
   var filled_block_part = partition_filled_blocks(num_separators, max_int_size, filled_blocks)
+  var cluster_bounds = region(ispace(int3d, {num_separators, num_separators, max_int_size*max_int_size}, {1, 1, 0}), Cluster)
+  var cluster_bounds_part = partition_cluster_bounds(cluster_bounds, num_separators)
 
   for level = levels-1, -1, -1 do
-    var cluster_bounds = region(ispace(int3d, {num_separators, num_separators, max_int_size*max_int_size}, {1, 1, 0}), Cluster)
-    var cluster_bounds_part = partition_cluster_bounds(cluster_bounds, num_separators)
 
     for lvl = 0, level+1 do
       for sep_idx = 0, [int](math.pow(2, lvl)) do
@@ -735,7 +738,7 @@ task main()
       end
     end
 
-    var cpart = partition(cluster_bounds.cluster, cluster_bounds.ispace)
+    var cpart = partition(equal, cluster_bounds, cluster_bounds.ispace)
     var sep_part = partition_by_image_range(mat, cluster_bounds, cpart)
     -- var sep_part = image(mat, cpart, cluster_bounds.bounds)
 
