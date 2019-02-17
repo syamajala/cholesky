@@ -40,7 +40,6 @@ struct MMatBanner {
 }
 
 fspace Cluster {
-  cluster:int3d,
   bounds:rect2d,
   sep: int2d
 }
@@ -413,19 +412,15 @@ do
           if row_sep == col_sep and idx.y <= idx.x then
             -- c.printf("Block: %d %d %d Filling Diagonal: %d %d I: %d J: %d key: %lu Entry: %0.2f\n",
             --          row_sep, col_sep, z, idx.x, idx.y, idxi, idxj, eidx, entry)
-            block[idx] = entry
-
             if entry ~= 0 then
+              block[idx] = entry
               nnz += 1
             end
-          elseif row_sep == col_sep and idx.y > idx.x then
-            block[idx] = 0.0
           elseif row_sep ~= col_sep then
             -- c.printf("Block: %d %d %d Filling Off-Diagonal: %d %d I: %d J: %d key: %lu Entry: %0.2f\n",
             --          row_sep, col_sep, z, idx.x, idx.y, idxi, idxj, eidx, entry)
-            block[idx] = entry
-
             if entry ~= 0 then
+              block[idx] = entry
               nnz += 1
             end
           end
@@ -460,7 +455,8 @@ do
 end
 
 --__demand(__inline)
-task merge_filled_blocks(filled_blocks:region(ispace(int3d), Filled), max_int_size:int, num_separators:int, interval:int, clusters:&&&int)
+task merge_filled_blocks(filled_blocks:region(ispace(int3d), Filled),
+                         max_int_size:int, num_separators:int, interval:int, clusters:&&&int)
 where
   reads writes(filled_blocks)
 do
@@ -529,6 +525,44 @@ task find_color_space(color:int2d, interval:int, clusters:&&&int, filled_ispace:
   return filled_ispace & colors
 end
 
+task find_index_space(levels:int, blocks:region(ispace(int3d), int1d), tree:&&int, clusters:&&&int)
+where
+  reads writes (blocks)
+do
+
+    for lvl = 0, levels do
+      for sep_idx = 0, [int](math.pow(2, lvl)) do
+        var row_sep = tree[lvl][sep_idx]
+        var row_cluster_size = clusters[row_sep][0][0]-1
+
+        for i = 0, row_cluster_size do
+          for j = 0, row_cluster_size do
+            -- c.printf("Block: %d %d %d\n", row_sep, row_sep, i*row_cluster_size+j)
+            blocks[{row_sep, row_sep, i*row_cluster_size+j}] = 1
+          end
+        end
+
+        for clvl = lvl+1, levels do
+          for csep_idx = [int](sep_idx*math.pow(2, clvl-lvl)), [int]((sep_idx+1)*math.pow(2, clvl-lvl)) do
+            var col_sep = tree[clvl][csep_idx]
+            var col_cluster_size = clusters[col_sep][0][0]-1
+
+            for i = 0, row_cluster_size do
+              for j = 0, col_cluster_size do
+                -- c.printf("Block: %d %d %d\n", row_sep, col_sep, i*col_cluster_size+j)
+                blocks[{row_sep, col_sep, i*col_cluster_size+j}] = 1
+              end
+            end
+          end
+        end
+      end
+    end
+
+    var part = partition(blocks, ispace(int1d, 2))
+    var allocated_blocks = part[1].ispace
+    return part[0].ispace
+end
+
 __demand(__leaf)
 task fill_b(separators:&&int, Bentries:&double, BP:region(ispace(int1d), double), Bcolor:int1d)
 where
@@ -591,21 +625,17 @@ task partition_filled_blocks(num_separators:int, max_int_size:int, filled_blocks
 where
   reads writes(filled_blocks)
 do
-  fill(filled_blocks.nz, -1)
-  fill(filled_blocks.filled, 1)
-
   for i in filled_blocks.ispace do
     filled_blocks[i].color = int2d{i.x, i.y}
   end
 
   var filled_block_part = partition(filled_blocks.color, ispace(int2d, {num_separators, num_separators}, {1, 1}))
-
   return filled_block_part
 end
 
 task partition_cluster_bounds(cluster_bounds:region(ispace(int3d), Cluster), num_separators:int)
 where
-  reads writes(cluster_bounds.sep)
+  reads writes(cluster_bounds.{sep, bounds})
 do
   for color in cluster_bounds.ispace do
     cluster_bounds[color].sep = {color.x, color.y}
@@ -614,7 +644,6 @@ do
   var cluster_part = partition(cluster_bounds.sep, ispace(int2d, {num_separators, num_separators}, {1, 1}))
   return cluster_part
 end
-
 
 task partition_by_image_range(mat:region(ispace(int2d), double),
                               cluster_bounds:region(ispace(int3d), Cluster),
@@ -692,7 +721,7 @@ task main()
   c.printf("separators: %d\n", num_separators)
 
   var mat = region(ispace(int2d, {x = banner.M, y = banner.N}), double)
-
+  fill(mat, 0)
   var cols:uint64 = [uint64](banner.N)
   read_matrix(matrix_file, banner.NZ, cols)
   c.fclose(matrix_file)
@@ -709,9 +738,19 @@ task main()
       max_int_size = max(clusters[i][0][0]-1, max_int_size)
   end
 
+  var blocks = region(ispace(int3d, {num_separators, num_separators, max_int_size*max_int_size}, {1, 1, 0}), int1d)
+  fill(blocks, 0)
+  var allocated_blocks_ispace = find_index_space(levels, blocks, tree, clusters)
+
   var filled_blocks = region(ispace(int3d, {num_separators, num_separators, max_int_size*max_int_size}, {1, 1, 0}), Filled)
+  fill(filled_blocks.nz, -1)
+  fill(filled_blocks.filled, 1)
+  fill(filled_blocks.color, int2d{-1, -1})
   var filled_block_part = partition_filled_blocks(num_separators, max_int_size, filled_blocks)
+
   var cluster_bounds = region(ispace(int3d, {num_separators, num_separators, max_int_size*max_int_size}, {1, 1, 0}), Cluster)
+  fill(cluster_bounds.sep, int2d{-1, -1})
+  fill(cluster_bounds.bounds, rect2d{lo=int2d{-1, -1}, hi=int2d{-1, -1}})
   var cluster_bounds_part = partition_cluster_bounds(cluster_bounds, num_separators)
 
   for level = levels-1, -1, -1 do
@@ -748,12 +787,12 @@ task main()
         if block.volume ~= 0 then
           -- c.printf("Filling: %d %d\n", color.x, color.y)
           var fpblock = filled_block_part[color]
+          fill(block, 0)
           nz += fill_block(block, color, separators, clusters, cols, fpblock, debug)
           -- regentlib.assert(nz <= banner.NZ, "Mismatch in number of entries.")
         end
       end
 
-      c.printf("Done fill.\n")
       c.printf("Filled: %d Expected: %d\n", nz, banner.NZ)
 
       if c.strcmp(permuted_matrix_file, '') ~= 0 then
