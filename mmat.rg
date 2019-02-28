@@ -616,29 +616,27 @@ do
   end
 end
 
-task partition_filled_blocks(filled_blocks:region(ispace(int3d), Filled), num_separators:int)
-where
-  reads writes(filled_blocks.sep)
-do
-  for i in filled_blocks.ispace do
-    filled_blocks[i].sep = int2d{i.x, i.y}
+local function generate_partition(r_type)
+  local r = regentlib.newsymbol(r_type, "r")
+  local n = regentlib.newsymbol(int, "n")
+
+  local task fill_sep([r], [n])
+  where
+    reads writes(r.sep)
+  do
+    for color in r.ispace do
+      r[color].sep = int2d{color.x, color.y}
+    end
+
+    var part = partition(r.sep, ispace(int2d, {n, n}, {1, 1}))
+    return part
   end
 
-  var filled_block_part = partition(filled_blocks.sep, ispace(int2d, {num_separators, num_separators}, {1, 1}))
-  return filled_block_part
+  return fill_sep
 end
 
-task partition_cluster_bounds(cluster_bounds:region(ispace(int3d), Cluster), num_separators:int)
-where
-  reads writes(cluster_bounds.sep)
-do
-  for color in cluster_bounds.ispace do
-    cluster_bounds[color].sep = {color.x, color.y}
-  end
-
-  var cluster_part = partition(cluster_bounds.sep, ispace(int2d, {num_separators, num_separators}, {1, 1}))
-  return cluster_part
-end
+local partition_filled_blocks = generate_partition(region(ispace(int3d), Filled))
+local partition_cluster_bounds = generate_partition(region(ispace(int3d), Cluster))
 
 task partition_by_image_range(mat:region(ispace(int2d), double),
                               cluster_bounds:region(ispace(int3d), Cluster),
@@ -717,6 +715,7 @@ task main()
 
   var mat = region(ispace(int2d, {x = banner.M, y = banner.N}), double)
   fill(mat, 0)
+
   var cols:uint64 = [uint64](banner.N)
   read_matrix(matrix_file, banner.NZ, cols)
   c.fclose(matrix_file)
@@ -733,12 +732,12 @@ task main()
       max_int_size = max(clusters[i][0][0]-1, max_int_size)
   end
 
-  var allocated_blocks_ispace = ispace(int3d, {num_separators, num_separators, max_int_size*max_int_size}, {1, 1, 0})
-  -- var blocks = region(ispace(int3d, {num_separators, num_separators, max_int_size*max_int_size}, {1, 1, 0}), int1d)
-  -- fill(blocks, 0)
-  -- var allocated_blocks = find_index_space(levels, blocks, tree, clusters)
-  -- var allocated_blocks_part = partition(blocks, ispace(int1d, 2))
-  -- var allocated_blocks_ispace = allocated_blocks_part[1].ispace
+  -- var allocated_blocks_ispace = ispace(int3d, {num_separators, num_separators, max_int_size*max_int_size}, {1, 1, 0})
+  var blocks = region(ispace(int3d, {num_separators, num_separators, max_int_size*max_int_size}, {1, 1, 0}), int1d)
+  fill(blocks, 0)
+  var allocated_blocks = find_index_space(levels, blocks, tree, clusters)
+  var allocated_blocks_part = partition(blocks, ispace(int1d, 2))
+  var allocated_blocks_ispace = allocated_blocks_part[1].ispace
 
   var filled_blocks = region(allocated_blocks_ispace, Filled)
   fill(filled_blocks.nz, -1)
@@ -777,8 +776,6 @@ task main()
 
     var cpart = partition(equal, cluster_bounds, cluster_bounds.ispace)
     -- var sep_part = image(mat, cpart, cluster_bounds.bounds)
-
-    -- var cpart = partition(cluster_bounds.cluster, cluster_bounds.ispace)
     var sep_part = partition_by_image_range(mat, cluster_bounds, cpart)
 
     if interval == 0 then
