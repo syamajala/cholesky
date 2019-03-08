@@ -1,4 +1,4 @@
--- Copyright 2018 Stanford University
+-- Copyright 2019 Stanford University
 --
 -- Licensed under the Apache License, Version 2.0 (the "License");
 -- you may not use this file except in compliance with the License.
@@ -80,7 +80,7 @@ terra dtrsm_terra(rectA:rect2d, rectB:rect2d, m:int, n:int,
   var alpha = 1.0
 
   cblas.cblas_dtrsm(cblas.CblasColMajor, cblas.CblasRight, cblas.CblasLower, cblas.CblasTrans, cblas.CblasNonUnit, m, n, alpha,
-                   rawA.ptr, rawA.offset, rawB.ptr, rawB.offset)
+                    rawA.ptr, rawA.offset, rawB.ptr, rawB.offset)
 end
 
 __demand(__leaf)

@@ -1,4 +1,4 @@
--- Copyright 2018 Stanford University
+-- Copyright 2019 Stanford University
 --
 -- Licensed under the Apache License, Version 2.0 (the "License");
 -- you may not use this file except in compliance with the License.
@@ -41,6 +41,7 @@ struct MMatBanner {
 
 fspace Cluster {
   bounds:rect2d,
+  cluster:int3d,
   sep: int2d,
 }
 
@@ -292,7 +293,7 @@ where
   reads writes(cluster_bounds.bounds)
 do
   for i in cluster_bounds do
-    cluster_bounds[i].bounds = rect2d{lo=int2d{-1, -1}, hi=int2d{-1, -1}}
+    cluster_bounds[i].bounds = rect2d{lo=int2d{0, 0}, hi=int2d{-1, -1}}
   end
 
   var row_sep = block_color.x
@@ -455,7 +456,8 @@ do
 end
 
 --__demand(__inline)
-task merge_filled_blocks(filled_blocks:region(ispace(int3d), Filled), num_separators:int, interval:int, clusters:&&&int)
+task merge_filled_blocks(allocated_blocks:ispace(int2d), filled_blocks:region(ispace(int3d), Filled),
+                         num_separators:int, interval:int, clusters:&&&int)
 where
   reads writes(filled_blocks)
 do
@@ -468,7 +470,7 @@ do
   fill(filled_blocks.filled, 1)
 
   c.printf("Merging blocks from interval: %d\n", interval-1)
-  for block in ispace(int2d, {num_separators, num_separators}, {1, 1}) do
+  for block in allocated_blocks do
     var row_sep = block.x
     var col_sep = block.y
 
@@ -498,7 +500,7 @@ do
             for j = left, right do
               var old_id = int3d{row_sep, col_sep, i*prev_cols+j}
               -- c.printf("%d ", old_id.z)
-              filled_blocks[new_id].nz += blocks[old_id].nz
+              filled_blocks[new_id].nz = filled_blocks[new_id].nz + blocks[old_id].nz
               if filled_blocks[new_id].nz > 0 then
                 filled_blocks[new_id].filled = 0
               end
@@ -525,7 +527,7 @@ task find_color_space(color:int2d, interval:int, clusters:&&&int, filled_ispace:
 end
 
 __demand(__leaf)
-task find_index_space(levels:int, blocks:region(ispace(int3d), int1d), tree:&&int, clusters:&&&int)
+task find_index_space_3d(levels:int, blocks:region(ispace(int3d), int1d), tree:&&int, clusters:&&&int)
 where
   reads writes (blocks)
 do
@@ -552,6 +554,29 @@ do
                 blocks[{row_sep, col_sep, i*col_cluster_size+j}] = 1
               end
             end
+          end
+        end
+      end
+    end
+end
+
+__demand(__leaf)
+task find_index_space_2d(levels:int, blocks:region(ispace(int2d), int1d), tree:&&int)
+where
+  reads writes (blocks)
+do
+    for lvl = 0, levels do
+      for sep_idx = 0, [int](math.pow(2, lvl)) do
+        var row_sep = tree[lvl][sep_idx]
+
+        -- c.printf("Block: %d %d %d\n", row_sep, row_sep, i*row_cluster_size+j)
+        blocks[{row_sep, row_sep}] = 1
+
+        for clvl = lvl+1, levels do
+          for csep_idx = [int](sep_idx*math.pow(2, clvl-lvl)), [int]((sep_idx+1)*math.pow(2, clvl-lvl)) do
+            var col_sep = tree[clvl][csep_idx]
+            -- c.printf("Block: %d %d %d\n", row_sep, col_sep, i*col_cluster_size+j)
+            blocks[{row_sep, col_sep}] = 1
           end
         end
       end
@@ -635,8 +660,22 @@ local function generate_partition(r_type)
   return fill_sep
 end
 
-local partition_filled_blocks = generate_partition(region(ispace(int3d), Filled))
-local partition_cluster_bounds = generate_partition(region(ispace(int3d), Cluster))
+local partition_filled_blocks_by_sep = generate_partition(region(ispace(int3d), Filled))
+local partition_cluster_bounds_by_sep = generate_partition(region(ispace(int3d), Cluster))
+
+
+task partition_cluster_bounds_by_cluster(cluster_bounds:region(ispace(int3d), Cluster))
+where
+  reads writes(cluster_bounds.cluster)
+do
+  for i in cluster_bounds.ispace do
+    cluster_bounds[i].cluster = i
+  end
+
+  var part = partition(cluster_bounds.cluster, cluster_bounds.ispace)
+  return part
+end
+
 
 task partition_by_image_range(mat:region(ispace(int2d), double),
                               cluster_bounds:region(ispace(int3d), Cluster),
@@ -732,23 +771,30 @@ task main()
       max_int_size = max(clusters[i][0][0]-1, max_int_size)
   end
 
-  -- var allocated_blocks_ispace = ispace(int3d, {num_separators, num_separators, max_int_size*max_int_size}, {1, 1, 0})
-  var blocks = region(ispace(int3d, {num_separators, num_separators, max_int_size*max_int_size}, {1, 1, 0}), int1d)
+  var blocks = region(ispace(int2d, {num_separators, num_separators}, {1, 1}), int1d)
   fill(blocks, 0)
-  var allocated_blocks = find_index_space(levels, blocks, tree, clusters)
+  var allocated_blocks = find_index_space_2d(levels, blocks, tree)
   var allocated_blocks_part = partition(blocks, ispace(int1d, 2))
   var allocated_blocks_ispace = allocated_blocks_part[1].ispace
 
-  var filled_blocks = region(allocated_blocks_ispace, Filled)
+  -- var allocated_blocks_ispace = ispace(int3d, {num_separators, num_separators, max_int_size*max_int_size}, {1, 1, 0})
+  var cluster_blocks = region(ispace(int3d, {num_separators, num_separators, max_int_size*max_int_size}, {1, 1, 0}), int1d)
+  fill(cluster_blocks, 0)
+  var allocated_cluster_blocks = find_index_space_3d(levels, cluster_blocks, tree, clusters)
+  var allocated_cluster_blocks_part = partition(cluster_blocks, ispace(int1d, 2))
+  var allocated_cluster_blocks_ispace = allocated_cluster_blocks_part[1].ispace
+
+  var filled_blocks = region(allocated_cluster_blocks_ispace, Filled)
   fill(filled_blocks.nz, -1)
   fill(filled_blocks.filled, 1)
   fill(filled_blocks.sep, int2d{-1, -1})
-  var filled_block_part = partition_filled_blocks(filled_blocks, num_separators)
+  var filled_block_part = partition_filled_blocks_by_sep(filled_blocks, num_separators)
 
-  var cluster_bounds = region(allocated_blocks_ispace, Cluster)
+  var cluster_bounds = region(allocated_cluster_blocks_ispace, Cluster)
   fill(cluster_bounds.sep, int2d{-1, -1})
-  fill(cluster_bounds.bounds, rect2d{lo=int2d{-1, -1}, hi=int2d{-1, -1}})
-  var cluster_bounds_part = partition_cluster_bounds(cluster_bounds, num_separators)
+  fill(cluster_bounds.bounds, rect2d{lo=int2d{0, 0}, hi=int2d{-1, -1}})
+  var cluster_bounds_part = partition_cluster_bounds_by_sep(cluster_bounds, num_separators)
+  var cpart = partition_cluster_bounds_by_cluster(cluster_bounds)
 
   for level = levels-1, -1, -1 do
 
@@ -774,7 +820,7 @@ task main()
       end
     end
 
-    var cpart = partition(equal, cluster_bounds, cluster_bounds.ispace)
+    -- var cpart = partition(equal, cluster_bounds, cluster_bounds.ispace)
     -- var sep_part = image(mat, cpart, cluster_bounds.bounds)
     var sep_part = partition_by_image_range(mat, cluster_bounds, cpart)
 
@@ -962,7 +1008,7 @@ task main()
       end
     end
     interval += 1
-    merge_filled_blocks(filled_blocks, num_separators, interval, clusters)
+    merge_filled_blocks(allocated_blocks_ispace, filled_blocks, num_separators, interval, clusters)
   end
 
   c.printf("Done factoring.\n")
