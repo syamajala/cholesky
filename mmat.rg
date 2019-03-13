@@ -700,6 +700,39 @@ do
   return __import_partition(disjoint, mat, cluster_bounds.ispace, raw_part)
 end
 
+task fused_dpotrf(rA:region(ispace(int2d), double), cluster_bounds:region(ispace(int3d), Cluster), filled:ispace(int3d))
+where
+  reads writes(rA), reads(cluster_bounds)
+do
+  for color in filled do
+    var rectA = cluster_bounds[color]
+    var size:int2d = rectA.bounds.hi - rectA.bounds.lo + {1, 1}
+    dpotrf_terra(rectA.bounds, size.x, __physical(rA)[0], __fields(rA)[0])
+  end
+end
+
+task fused_dtrsm(rA:region(ispace(int2d), double),
+                 rB:region(ispace(int2d), double),
+                 cluster_bounds_rA:region(ispace(int3d), Cluster),
+                 cluster_bounds_rB:region(ispace(int3d), Cluster),
+                 filled_rA:ispace(int3d),
+                 filled_rB:ispace(int3d))
+where
+  reads(rA, cluster_bounds_rA, cluster_bounds_rB), reads writes(rB)
+do
+  for acolor in filled_rA do
+    var rectA = cluster_bounds_rA[acolor].bounds
+    for bcolor in filled_rB do
+      var rectB = cluster_bounds_rB[bcolor].bounds
+      var size:int2d = rectB.hi - rectB.lo + {1, 1}
+      dtrsm_terra(rectA, rectB, size.x, size.y,
+                  __physical(rA)[0], __fields(rA)[0],
+                  __physical(rB)[0], __fields(rB)[0])
+    end
+  end
+end
+
+
 __demand(__inner)
 task main()
   var args = c.legion_runtime_get_input_args()
@@ -854,10 +887,11 @@ task main()
       var pivot_color = int2d{sep, sep}
       var filled_pivot = find_color_space(pivot_color, interval, clusters, filled_ispace)
 
-      __demand(__parallel)
-      for color in filled_pivot do
-        dpotrf(sep_part[color])
-      end
+      fused_dpotrf(mat_part[pivot_color], cluster_bounds_part[pivot_color], filled_pivot)
+      -- __demand(__parallel)
+      -- for color in filled_pivot do
+      --   dpotrf(sep_part[color])
+      -- end
 
       if debug then
         var pivot = mat_part[pivot_color]
@@ -884,11 +918,14 @@ task main()
         var off_diag_color = int2d{par_sep, sep}
         var filled_off_diag = find_color_space(off_diag_color, interval, clusters, filled_ispace)
 
-        for pcolor in filled_pivot do
-          for ocolor in filled_off_diag do
-            dtrsm(sep_part[pcolor], sep_part[ocolor])
-          end
-        end
+        fused_dtrsm(mat_part[pivot_color], mat_part[off_diag_color],
+                    cluster_bounds_part[pivot_color], cluster_bounds_part[off_diag_color],
+                    filled_pivot, filled_off_diag)
+        -- for pcolor in filled_pivot do
+        --   for ocolor in filled_off_diag do
+        --     dtrsm(sep_part[pcolor], sep_part[ocolor])
+        --   end
+        -- end
 
         if debug then
           var pivot = mat_part[pivot_color]
