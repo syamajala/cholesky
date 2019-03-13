@@ -700,6 +700,7 @@ do
   return __import_partition(disjoint, mat, cluster_bounds.ispace, raw_part)
 end
 
+__demand(__leaf)
 task fused_dpotrf(rA:region(ispace(int2d), double), cluster_bounds:region(ispace(int3d), Cluster), filled:ispace(int3d))
 where
   reads writes(rA), reads(cluster_bounds)
@@ -711,6 +712,7 @@ do
   end
 end
 
+__demand(__leaf)
 task fused_dtrsm(rA:region(ispace(int2d), double),
                  rB:region(ispace(int2d), double),
                  cluster_bounds_rA:region(ispace(int3d), Cluster),
@@ -720,10 +722,10 @@ task fused_dtrsm(rA:region(ispace(int2d), double),
 where
   reads(rA, cluster_bounds_rA, cluster_bounds_rB), reads writes(rB)
 do
-  for acolor in filled_rA do
-    var rectA = cluster_bounds_rA[acolor].bounds
-    for bcolor in filled_rB do
-      var rectB = cluster_bounds_rB[bcolor].bounds
+  for Acolor in filled_rA do
+    var rectA = cluster_bounds_rA[Acolor].bounds
+    for Bcolor in filled_rB do
+      var rectB = cluster_bounds_rB[Bcolor].bounds
       var size:int2d = rectB.hi - rectB.lo + {1, 1}
       dtrsm_terra(rectA, rectB, size.x, size.y,
                   __physical(rA)[0], __fields(rA)[0],
@@ -732,6 +734,117 @@ do
   end
 end
 
+__demand(__leaf)
+task fused_dsyrk(rA:region(ispace(int2d), double),
+                 rB:region(ispace(int2d), double),
+                 rC:region(ispace(int2d), double),
+                 cluster_bounds_rA:region(ispace(int3d), Cluster),
+                 cluster_bounds_rB:region(ispace(int3d), Cluster),
+                 cluster_bounds_rC:region(ispace(int3d), Cluster),
+                 filled_rA:ispace(int3d),
+                 filled_rB:ispace(int3d),
+                 col_cluster_size:int,
+                 filled_blocks_A:region(ispace(int3d), Filled),
+                 filled_blocks_B:region(ispace(int3d), Filled),
+                 filled_blocks_C:region(ispace(int3d), Filled))
+where
+  reads(rA, rB, cluster_bounds_rA, cluster_bounds_rB, cluster_bounds_rC, filled_blocks_A, filled_blocks_B),
+  reads writes(rC, filled_blocks_C)
+do
+  for Acolor in filled_rA do
+    var row = Acolor.z
+    var rectA = cluster_bounds_rA[Acolor].bounds
+    var sizeA:int2d = rectA.hi - rectA.lo + {1, 1}
+
+    for Bcolor in filled_rB do
+      var col = Bcolor.z
+
+      var Ccolor = int3d{Acolor.x, Bcolor.x, row*(col_cluster_size-1)+col}
+      var rectC = cluster_bounds_rC[Ccolor].bounds
+      var sizeC:int2d = rectC.hi - rectC.lo + {1, 1}
+
+      if col < row then
+        var rectB = cluster_bounds_rB[Bcolor].bounds
+
+        var m = sizeC.x
+        var n = sizeC.y
+        var k = sizeA.y
+
+        dgemm_terra(rectA, rectB, rectC, m, n, k,
+                    __physical(rA)[0], __fields(rA)[0],
+                    __physical(rB)[0], __fields(rB)[0],
+                    __physical(rC)[0], __fields(rC)[0])
+
+        if filled_blocks_C[Ccolor].nz <= 0 then
+          filled_blocks_C[Ccolor].nz = filled_blocks_A[Acolor].nz * filled_blocks_B[Bcolor].nz
+          filled_blocks_C[Ccolor].filled = 0
+        end
+
+      elseif col == row then
+        var n = sizeC.x
+        var k = sizeA.y
+
+        dsyrk_terra(rectA, rectC, n, k,
+                    __physical(rA)[0], __fields(rA)[0],
+                    __physical(rC)[0], __fields(rC)[0])
+
+        if filled_blocks_C[Ccolor].nz <= 0 then
+          filled_blocks_C[Ccolor].nz = filled_blocks_A[Acolor].nz * filled_blocks_C[Ccolor].nz
+          filled_blocks_C[Ccolor].filled = 0
+        end
+
+      end
+    end
+  end
+end
+
+__demand(__leaf)
+task fused_dgemm(rA:region(ispace(int2d), double),
+                 rB:region(ispace(int2d), double),
+                 rC:region(ispace(int2d), double),
+                 cluster_bounds_rA:region(ispace(int3d), Cluster),
+                 cluster_bounds_rB:region(ispace(int3d), Cluster),
+                 cluster_bounds_rC:region(ispace(int3d), Cluster),
+                 filled_rA:ispace(int3d),
+                 filled_rB:ispace(int3d),
+                 col_cluster_size:int,
+                 filled_blocks_A:region(ispace(int3d), Filled),
+                 filled_blocks_B:region(ispace(int3d), Filled),
+                 filled_blocks_C:region(ispace(int3d), Filled))
+where
+  reads(rA, rB, cluster_bounds_rA, cluster_bounds_rB, cluster_bounds_rC, filled_blocks_A, filled_blocks_B),
+  reads writes(rC, filled_blocks_C)
+do
+  for Acolor in filled_rA do
+    var row = Acolor.z
+    var rectA = cluster_bounds_rA[Acolor].bounds
+    var sizeA:int2d = rectA.hi - rectA.lo + {1, 1}
+
+    for Bcolor in filled_rB do
+      var col = Bcolor.z
+
+      var Ccolor = int3d{Acolor.x, Bcolor.x, row*(col_cluster_size-1)+col}
+      var rectC = cluster_bounds_rC[Ccolor].bounds
+      var sizeC:int2d = rectC.hi - rectC.lo + {1, 1}
+
+      var rectB = cluster_bounds_rB[Bcolor].bounds
+
+      var m = sizeC.x
+      var n = sizeC.y
+      var k = sizeA.y
+
+      dgemm_terra(rectA, rectB, rectC, m, n, k,
+                  __physical(rA)[0], __fields(rA)[0],
+                  __physical(rB)[0], __fields(rB)[0],
+                  __physical(rC)[0], __fields(rC)[0])
+
+      if filled_blocks_C[Ccolor].nz <= 0 then
+        filled_blocks_C[Ccolor].nz = filled_blocks_A[Acolor].nz * filled_blocks_B[Bcolor].nz
+        filled_blocks_C[Ccolor].filled = 0
+      end
+    end
+  end
+end
 
 __demand(__inner)
 task main()
@@ -855,7 +968,7 @@ task main()
 
     -- var cpart = partition(equal, cluster_bounds, cluster_bounds.ispace)
     -- var sep_part = image(mat, cpart, cluster_bounds.bounds)
-    var sep_part = partition_by_image_range(mat, cluster_bounds, cpart)
+    -- var sep_part = partition_by_image_range(mat, cluster_bounds, cpart)
 
     if interval == 0 then
       for color in mat_part.colors do
@@ -965,60 +1078,68 @@ task main()
           var filled_B_colors = find_color_space(B_color, interval, clusters, filled_ispace)
 
           if grandpar_sep == par_sep then
-            for Acolor in filled_A_colors do
-              var row = Acolor.z
-              var ABlock = sep_part[Acolor]
+            -- for Acolor in filled_A_colors do
+            --   var row = Acolor.z
+            --   var ABlock = sep_part[Acolor]
 
-              for Bcolor in filled_B_colors do
-                var col = Bcolor.z
+            --   for Bcolor in filled_B_colors do
+            --     var col = Bcolor.z
 
-                var Ccolor = int3d{grandpar_sep, par_sep, row*(col_cluster_size-1)+col}
-                var CBlock = sep_part[Ccolor]
+            --     var Ccolor = int3d{grandpar_sep, par_sep, row*(col_cluster_size-1)+col}
+            --     var CBlock = sep_part[Ccolor]
 
-                if col < row then
-                  var BBlock = sep_part[Bcolor]
+            --     if col < row then
+            --       var BBlock = sep_part[Bcolor]
 
-                  -- c.printf("\t\tGEMM C=(%d, %d, %d) A=(%d, %d, %d) B=(%d, %d, %d)\n",
-                  --          Ccolor.x, Ccolor.y, Ccolor.z,
-                  --          Acolor.x, Acolor.y, Acolor.z,
-                  --          Bcolor.x, Bcolor.y, Bcolor.z)
+            --       -- c.printf("\t\tGEMM C=(%d, %d, %d) A=(%d, %d, %d) B=(%d, %d, %d)\n",
+            --       --          Ccolor.x, Ccolor.y, Ccolor.z,
+            --       --          Acolor.x, Acolor.y, Acolor.z,
+            --       --          Bcolor.x, Bcolor.y, Bcolor.z)
 
-                  dgemm(ABlock, BBlock, CBlock)
-                  update_filled_blocks(filled_blocks, Acolor, Bcolor, Ccolor)
+            --       dgemm(ABlock, BBlock, CBlock)
+            --       update_filled_blocks(filled_blocks, Acolor, Bcolor, Ccolor)
 
-                elseif col == row then
+            --     elseif col == row then
 
-                  -- c.printf("\t\tSYRK C=(%d, %d, %d) A=(%d, %d, %d)\n",
-                  --          Ccolor.x, Ccolor.y, Ccolor.z,
-                  --          Acolor.x, Acolor.y, Acolor.z)
+            --       -- c.printf("\t\tSYRK C=(%d, %d, %d) A=(%d, %d, %d)\n",
+            --       --          Ccolor.x, Ccolor.y, Ccolor.z,
+            --       --          Acolor.x, Acolor.y, Acolor.z)
 
-                  dsyrk(ABlock, CBlock)
-                  update_filled_blocks(filled_blocks, Acolor, Ccolor, Ccolor)
-                end
-              end
-            end
+            --       -- dsyrk(ABlock, CBlock)
+            --       update_filled_blocks(filled_blocks, Acolor, Ccolor, Ccolor)
+            --     end
+            --   end
+            -- end
+            fused_dsyrk(mat_part[A_color], mat_part[B_color], mat_part[C_color],
+                        cluster_bounds_part[A_color], cluster_bounds_part[B_color], cluster_bounds_part[C_color],
+                        filled_A_colors, filled_B_colors, col_cluster_size,
+                        filled_block_part[A_color], filled_block_part[B_color], filled_block_part[C_color])
           else
-            for Acolor in filled_A_colors do
-              var ABlock = sep_part[Acolor]
-              var row = Acolor.z
+            -- for Acolor in filled_A_colors do
+            --   var ABlock = sep_part[Acolor]
+            --   var row = Acolor.z
 
-              for Bcolor in filled_B_colors do
-                var BBlock = sep_part[Bcolor]
-                var col = Bcolor.z
+            --   for Bcolor in filled_B_colors do
+            --     var BBlock = sep_part[Bcolor]
+            --     var col = Bcolor.z
 
-                var Ccolor = int3d{grandpar_sep, par_sep, row*(col_cluster_size-1)+col}
-                var CBlock = sep_part[Ccolor]
+            --     var Ccolor = int3d{grandpar_sep, par_sep, row*(col_cluster_size-1)+col}
+            --     var CBlock = sep_part[Ccolor]
 
-                -- c.printf("\t\tGEMM C=(%d, %d, %d) A=(%d, %d, %d) B=(%d, %d, %d)\n",
-                --          Ccolor.x, Ccolor.y, Ccolor.z,
-                --          Acolor.x, Acolor.y, Acolor.z,
-                --          Bcolor.x, Bcolor.y, Bcolor.z)
+            --     -- c.printf("\t\tGEMM C=(%d, %d, %d) A=(%d, %d, %d) B=(%d, %d, %d)\n",
+            --     --          Ccolor.x, Ccolor.y, Ccolor.z,
+            --     --          Acolor.x, Acolor.y, Acolor.z,
+            --     --          Bcolor.x, Bcolor.y, Bcolor.z)
 
-                dgemm(ABlock, BBlock, CBlock)
-                update_filled_blocks(filled_blocks, Acolor, Bcolor, Ccolor)
+            --     dgemm(ABlock, BBlock, CBlock)
+            --     update_filled_blocks(filled_blocks, Acolor, Bcolor, Ccolor)
 
-              end
-            end
+            --   end
+            -- end
+            fused_dgemm(mat_part[A_color], mat_part[B_color], mat_part[C_color],
+                        cluster_bounds_part[A_color], cluster_bounds_part[B_color], cluster_bounds_part[C_color],
+                        filled_A_colors, filled_B_colors, col_cluster_size,
+                        filled_block_part[A_color], filled_block_part[B_color], filled_block_part[C_color])
           end
 
           if debug then
