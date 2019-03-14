@@ -322,7 +322,7 @@ task partition_matrix(tree:&&int, separators:&&int, allocated_blocks_ispace:ispa
   return mat_part
 end
 
-__demand(__leaf)
+__demand(__inline)
 task partition_separator(cluster_bounds:region(ispace(int3d), Cluster), block_color:int2d, block_bounds:rect2d,
                          interval:int, clusters:&&&int, debug:bool)
 where
@@ -389,6 +389,42 @@ do
 
     if debug then
       c.printf("\n")
+    end
+  end
+end
+
+__demand(__leaf)
+task partition_separators(tree:&&int,
+                          level:int,
+                          clusters:&&&int,
+                          interval:int,
+                          mat:region(ispace(int2d), double),
+                          mat_part:partition(disjoint, mat, ispace(int2d)),
+                          cluster_bounds:region(ispace(int3d), Cluster),
+                          cluster_bounds_part:partition(disjoint, cluster_bounds, ispace(int2d)),
+                          debug:bool)
+where
+  reads(mat), reads writes(cluster_bounds)
+do
+  for lvl = 0, level+1 do
+    for sep_idx = 0, [int](math.pow(2, lvl)) do
+      var row = tree[lvl][sep_idx]
+      -- c.printf("Partitioning: %d %d\n", row, row)
+      var block_color = int2d{row, row}
+      var block_bounds = mat_part[block_color].bounds
+      var cluster = cluster_bounds_part[block_color]
+      partition_separator(cluster, block_color, block_bounds, interval, clusters, debug)
+
+      for clvl = lvl+1, level+1 do
+        for csep_idx = [int](sep_idx*math.pow(2, clvl-lvl)), [int]((sep_idx+1)*math.pow(2, clvl-lvl)) do
+          var col = tree[clvl][csep_idx]
+          -- c.printf("Partitioning: %d %d\n", row, col)
+          var block_color = int2d{row, col}
+          var block_bounds = mat_part[block_color].bounds
+          var cluster = cluster_bounds_part[block_color]
+          partition_separator(cluster, block_color, block_bounds, interval, clusters, debug)
+        end
+      end
     end
   end
 end
@@ -667,17 +703,6 @@ do
   c.fclose(solution)
 end
 
-__demand(__leaf)
-task update_filled_blocks(filled_blocks:region(ispace(int3d), Filled), Acolor:int3d, Bcolor:int3d, Ccolor:int3d)
-where
-  reads writes(filled_blocks)
-do
-  if filled_blocks[Ccolor].nz <= 0 then
-    filled_blocks[Ccolor].nz = filled_blocks[Acolor].nz*filled_blocks[Bcolor].nz
-    filled_blocks[Ccolor].filled = 0
-  end
-end
-
 local function generate_partition(r_type)
   local r = regentlib.newsymbol(r_type, "r")
   local n = regentlib.newsymbol(int, "n")
@@ -699,7 +724,6 @@ end
 
 local partition_filled_blocks_by_sep = generate_partition(region(ispace(int3d), Filled))
 local partition_cluster_bounds_by_sep = generate_partition(region(ispace(int3d), Cluster))
-
 
 task partition_cluster_bounds_by_cluster(cluster_bounds:region(ispace(int3d), Cluster))
 where
@@ -957,51 +981,29 @@ task main()
   fill(cluster_bounds.bounds, rect2d{lo=int2d{0, 0}, hi=int2d{-1, -1}})
   var cluster_bounds_part = partition_cluster_bounds_by_sep(cluster_bounds, num_separators)
 
+  for color in mat_part.colors do
+    var block = mat_part[color]
+    if block.volume ~= 0 then
+      -- c.printf("Filling: %d %d\n", color.x, color.y)
+      var fpblock = filled_block_part[color]
+      fill(block, 0)
+      nz += fill_block(block, color, separators, clusters, cols, fpblock, debug)
+      -- regentlib.assert(nz <= banner.NZ, "Mismatch in number of entries.")
+    end
+  end
+
+  c.printf("Filled: %d Expected: %d\n", nz, banner.NZ)
+
+  if c.strcmp(permuted_matrix_file, '') ~= 0 then
+    c.printf("saving permuted matrix to: %s\n\n", permuted_matrix_file)
+    write_matrix(mat, mat_part, permuted_matrix_file, banner)
+  end
+
+  regentlib.assert(nz == banner.NZ, "Mismatch in number of entries.")
+
   for level = levels-1, -1, -1 do
 
-    for lvl = 0, level+1 do
-      for sep_idx = 0, [int](math.pow(2, lvl)) do
-        var row = tree[lvl][sep_idx]
-        -- c.printf("Partitioning: %d %d\n", row, row)
-        var block_color = int2d{row, row}
-        var block_bounds = mat_part[block_color].bounds
-        var cluster = cluster_bounds_part[block_color]
-        partition_separator(cluster, block_color, block_bounds, interval, clusters, debug)
-
-        for clvl = lvl+1, level+1 do
-          for csep_idx = [int](sep_idx*math.pow(2, clvl-lvl)), [int]((sep_idx+1)*math.pow(2, clvl-lvl)) do
-            var col = tree[clvl][csep_idx]
-            -- c.printf("Partitioning: %d %d\n", row, col)
-            var block_color = int2d{row, col}
-            var block_bounds = mat_part[block_color].bounds
-            var cluster = cluster_bounds_part[block_color]
-            partition_separator(cluster, block_color, block_bounds, interval, clusters, debug)
-          end
-        end
-      end
-    end
-
-    if interval == 0 then
-      for color in mat_part.colors do
-        var block = mat_part[color]
-        if block.volume ~= 0 then
-          -- c.printf("Filling: %d %d\n", color.x, color.y)
-          var fpblock = filled_block_part[color]
-          fill(block, 0)
-          nz += fill_block(block, color, separators, clusters, cols, fpblock, debug)
-          -- regentlib.assert(nz <= banner.NZ, "Mismatch in number of entries.")
-        end
-      end
-
-      c.printf("Filled: %d Expected: %d\n", nz, banner.NZ)
-
-      if c.strcmp(permuted_matrix_file, '') ~= 0 then
-        c.printf("saving permuted matrix to: %s\n\n", permuted_matrix_file)
-        write_matrix(mat, mat_part, permuted_matrix_file, banner)
-      end
-
-      regentlib.assert(nz == banner.NZ, "Mismatch in number of entries.")
-    end
+    partition_separators(tree, level, clusters, interval, mat, mat_part, cluster_bounds, cluster_bounds_part, debug)
 
     var filled_part = partition(filled_blocks.filled, ispace(int1d, 2))
     var filled_ispace = filled_part[0].ispace
