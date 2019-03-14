@@ -24,7 +24,7 @@ def run(**kwargs):
     args = ["regent.py", "mmat.rg",
             "-i", kwargs["mat"], "-s", kwargs["separators"], "-c", kwargs["clusters"],
             "-b", kwargs["b"], "-o", kwargs["solution"], "-m", kwargs["factored_mat"],
-            "-fflow", "0", "-ll:cpu", "3", "-fmapping", "0"]
+            "-fflow", "0", "-ll:cpu", "3"]
     print(" ".join(args))
     with open(kwargs["stdout"], 'w') as f:
         subprocess.call(args, stdout=f)

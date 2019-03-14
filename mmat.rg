@@ -39,6 +39,11 @@ struct MMatBanner {
   typecode:mmio.MM_typecode
 }
 
+fspace Block {
+  bounds:rect2d,
+  sep: int2d,
+}
+
 fspace Cluster {
   bounds:rect2d,
   cluster:int3d,
@@ -230,13 +235,42 @@ do
   end
 end
 
-task partition_matrix(tree:&&int, separators:&&int, mat:region(ispace(int2d), double), pprev_size:int2d, debug:bool)
+task partition_by_image_range(mat:region(ispace(int2d), double),
+                              block_bounds:region(ispace(int2d), Block),
+                              block_part:partition(disjoint, block_bounds, ispace(int2d)))
+where
+  reads(block_bounds.bounds)
+do
+  var fid = __fields(block_bounds)[0]
 
-  var coloring = c.legion_domain_point_coloring_create()
+  var ip = c.legion_index_partition_create_by_image_range(__runtime(),
+                                                          __context(),
+                                                          __raw(mat.ispace),
+                                                          __raw(block_part),
+                                                          __raw(block_bounds),
+                                                          fid,
+                                                          __raw(block_bounds.ispace),
+                                                          c.DISJOINT_KIND,
+                                                          -1)
+
+  var raw_part = c.legion_logical_partition_create(__runtime(), __context(), __raw(mat), ip)
+
+  return __import_partition(disjoint, mat, block_bounds.ispace, raw_part)
+end
+
+task partition_matrix(tree:&&int, separators:&&int, allocated_blocks_ispace:ispace(int2d), mat:region(ispace(int2d), double),
+                      pprev_size:int2d, debug:bool)
+
   var levels = separators[0][0]
   var num_separators = separators[0][1]
   var prev_size = pprev_size
+
+  var block_bounds = region(allocated_blocks_ispace, Block)
+  fill(block_bounds.sep, int2d{-1, -1})
+  fill(block_bounds.bounds, rect2d{lo=int2d{0, 0}, hi=int2d{-1, -1}})
+
   var separator_bounds = region(ispace(int1d, num_separators, 1), rect2d)
+  fill(separator_bounds, rect2d{lo=int2d{0, 0}, hi=int2d{-1, -1}})
 
   for level = 0, levels do
     for sep_idx = 0, [int](math.pow(2, level)) do
@@ -256,7 +290,9 @@ task partition_matrix(tree:&&int, separators:&&int, mat:region(ispace(int2d), do
       end
 
       var color:int2d = {x = sep, y = sep}
-      c.legion_domain_point_coloring_color_domain(coloring, color:to_domain_point(), c.legion_domain_from_rect_2d(bounds))
+      block_bounds[color].sep = color
+      block_bounds[color].bounds = bounds
+
       prev_size = prev_size - {size, size}
 
       var par_idx:int = sep_idx
@@ -275,14 +311,14 @@ task partition_matrix(tree:&&int, separators:&&int, mat:region(ispace(int2d), do
         end
 
         var color:int2d = {par_sep, sep}
-        c.legion_domain_point_coloring_color_domain(coloring, color:to_domain_point(), c.legion_domain_from_rect_2d(child_bounds))
+        block_bounds[color].sep = color
+        block_bounds[color].bounds = child_bounds
       end
     end
   end
 
-  var colors = ispace(int2d, {num_separators, num_separators}, {1, 1})
-  var mat_part = partition(disjoint, mat, coloring, colors)
-  c.legion_domain_point_coloring_destroy(coloring)
+  var bpart = partition(block_bounds.sep, block_bounds.ispace)
+  var mat_part = partition_by_image_range(mat, block_bounds, bpart)
   return mat_part
 end
 
@@ -468,6 +504,7 @@ do
   -- filled_blocks = region(ispace(int3d {num_separators, num_separators, max_int_size}, {1, 1, 0}), bool)
   fill(filled_blocks.nz, 0)
   fill(filled_blocks.filled, 1)
+  fill(filled_blocks.sep, int2d{-1, -1})
 
   c.printf("Merging blocks from interval: %d\n", interval-1)
   for block in allocated_blocks do
@@ -517,7 +554,7 @@ do
   -- end
 end
 
---__demand(__inline)
+-- __demand(__inline)
 task find_color_space(color:int2d, interval:int, clusters:&&&int, filled_ispace:ispace(int3d))
   var rows = clusters[color.x][interval][0]-1
   var cols = clusters[color.y][interval][0]-1
@@ -674,30 +711,6 @@ do
 
   var part = partition(cluster_bounds.cluster, cluster_bounds.ispace)
   return part
-end
-
-
-task partition_by_image_range(mat:region(ispace(int2d), double),
-                              cluster_bounds:region(ispace(int3d), Cluster),
-                              cluster_part:partition(disjoint, cluster_bounds, ispace(int3d)))
-where
-  reads(cluster_bounds.bounds)
-do
-  var fid = __fields(cluster_bounds)[0]
-
-  var ip = c.legion_index_partition_create_by_image_range(__runtime(),
-                                                          __context(),
-                                                          __raw(mat.ispace),
-                                                          __raw(cluster_part),
-                                                          __raw(cluster_bounds),
-                                                          fid,
-                                                          __raw(cluster_bounds.ispace),
-                                                          c.DISJOINT_KIND,
-                                                          -1)
-
-  var raw_part = c.legion_logical_partition_create(__runtime(), __context(), __raw(mat), ip)
-
-  return __import_partition(disjoint, mat, cluster_bounds.ispace, raw_part)
 end
 
 __demand(__leaf)
@@ -905,8 +918,14 @@ task main()
   read_matrix(matrix_file, banner.NZ, cols)
   c.fclose(matrix_file)
 
+  var blocks = region(ispace(int2d, {num_separators, num_separators}, {1, 1}), int1d)
+  fill(blocks, 0)
+  var allocated_blocks = find_index_space_2d(levels, blocks, tree)
+  var allocated_blocks_part = partition(blocks, ispace(int1d, 2))
+  var allocated_blocks_ispace = allocated_blocks_part[1].ispace
+
   var prev_size = int2d{x = banner.M-1, y = banner.N-1}
-  var mat_part = partition_matrix(tree, separators, mat, prev_size, debug)
+  var mat_part = partition_matrix(tree, separators, allocated_blocks_ispace, mat, prev_size, debug)
 
   var nz = 0
   var interval = 0
@@ -917,19 +936,14 @@ task main()
       max_int_size = max(clusters[i][0][0]-1, max_int_size)
   end
 
-  var blocks = region(ispace(int2d, {num_separators, num_separators}, {1, 1}), int1d)
-  fill(blocks, 0)
-  var allocated_blocks = find_index_space_2d(levels, blocks, tree)
-  var allocated_blocks_part = partition(blocks, ispace(int1d, 2))
-  var allocated_blocks_ispace = allocated_blocks_part[1].ispace
-
   -- var allocated_blocks_ispace = ispace(int3d, {num_separators, num_separators, max_int_size*max_int_size}, {1, 1, 0})
   var cluster_blocks = region(ispace(int3d, {num_separators, num_separators, max_int_size*max_int_size}, {1, 1, 0}), int1d)
   fill(cluster_blocks, 0)
   var allocated_cluster_blocks = find_index_space_3d(levels, cluster_blocks, tree, clusters)
   var allocated_cluster_blocks_part = partition(cluster_blocks, ispace(int1d, 2))
   var allocated_cluster_blocks_ispace = allocated_cluster_blocks_part[1].ispace
-  c.printf("Sparse ispace: %d\n", allocated_blocks_ispace.volume)
+  c.printf("Blocks ispace: %d\n", allocated_blocks_ispace.volume)
+  c.printf("Clusters ispace: %d\n", allocated_cluster_blocks_ispace.volume)
 
   var filled_blocks = region(allocated_cluster_blocks_ispace, Filled)
   fill(filled_blocks.nz, -1)
@@ -939,6 +953,7 @@ task main()
 
   var cluster_bounds = region(allocated_cluster_blocks_ispace, Cluster)
   fill(cluster_bounds.sep, int2d{-1, -1})
+  fill(cluster_bounds.cluster, int3d{-1, -1, -1})
   fill(cluster_bounds.bounds, rect2d{lo=int2d{0, 0}, hi=int2d{-1, -1}})
   var cluster_bounds_part = partition_cluster_bounds_by_sep(cluster_bounds, num_separators)
 
@@ -965,10 +980,6 @@ task main()
         end
       end
     end
-
-    -- var cpart = partition(equal, cluster_bounds, cluster_bounds.ispace)
-    -- var sep_part = image(mat, cpart, cluster_bounds.bounds)
-    -- var sep_part = partition_by_image_range(mat, cluster_bounds, cpart)
 
     if interval == 0 then
       for color in mat_part.colors do
@@ -1001,10 +1012,6 @@ task main()
       var filled_pivot = find_color_space(pivot_color, interval, clusters, filled_ispace)
 
       fused_dpotrf(mat_part[pivot_color], cluster_bounds_part[pivot_color], filled_pivot)
-      -- __demand(__parallel)
-      -- for color in filled_pivot do
-      --   dpotrf(sep_part[color])
-      -- end
 
       if debug then
         var pivot = mat_part[pivot_color]
@@ -1034,11 +1041,6 @@ task main()
         fused_dtrsm(mat_part[pivot_color], mat_part[off_diag_color],
                     cluster_bounds_part[pivot_color], cluster_bounds_part[off_diag_color],
                     filled_pivot, filled_off_diag)
-        -- for pcolor in filled_pivot do
-        --   for ocolor in filled_off_diag do
-        --     dtrsm(sep_part[pcolor], sep_part[ocolor])
-        --   end
-        -- end
 
         if debug then
           var pivot = mat_part[pivot_color]
@@ -1078,64 +1080,11 @@ task main()
           var filled_B_colors = find_color_space(B_color, interval, clusters, filled_ispace)
 
           if grandpar_sep == par_sep then
-            -- for Acolor in filled_A_colors do
-            --   var row = Acolor.z
-            --   var ABlock = sep_part[Acolor]
-
-            --   for Bcolor in filled_B_colors do
-            --     var col = Bcolor.z
-
-            --     var Ccolor = int3d{grandpar_sep, par_sep, row*(col_cluster_size-1)+col}
-            --     var CBlock = sep_part[Ccolor]
-
-            --     if col < row then
-            --       var BBlock = sep_part[Bcolor]
-
-            --       -- c.printf("\t\tGEMM C=(%d, %d, %d) A=(%d, %d, %d) B=(%d, %d, %d)\n",
-            --       --          Ccolor.x, Ccolor.y, Ccolor.z,
-            --       --          Acolor.x, Acolor.y, Acolor.z,
-            --       --          Bcolor.x, Bcolor.y, Bcolor.z)
-
-            --       dgemm(ABlock, BBlock, CBlock)
-            --       update_filled_blocks(filled_blocks, Acolor, Bcolor, Ccolor)
-
-            --     elseif col == row then
-
-            --       -- c.printf("\t\tSYRK C=(%d, %d, %d) A=(%d, %d, %d)\n",
-            --       --          Ccolor.x, Ccolor.y, Ccolor.z,
-            --       --          Acolor.x, Acolor.y, Acolor.z)
-
-            --       -- dsyrk(ABlock, CBlock)
-            --       update_filled_blocks(filled_blocks, Acolor, Ccolor, Ccolor)
-            --     end
-            --   end
-            -- end
             fused_dsyrk(mat_part[A_color], mat_part[B_color], mat_part[C_color],
                         cluster_bounds_part[A_color], cluster_bounds_part[B_color], cluster_bounds_part[C_color],
                         filled_A_colors, filled_B_colors, col_cluster_size,
                         filled_block_part[A_color], filled_block_part[B_color], filled_block_part[C_color])
           else
-            -- for Acolor in filled_A_colors do
-            --   var ABlock = sep_part[Acolor]
-            --   var row = Acolor.z
-
-            --   for Bcolor in filled_B_colors do
-            --     var BBlock = sep_part[Bcolor]
-            --     var col = Bcolor.z
-
-            --     var Ccolor = int3d{grandpar_sep, par_sep, row*(col_cluster_size-1)+col}
-            --     var CBlock = sep_part[Ccolor]
-
-            --     -- c.printf("\t\tGEMM C=(%d, %d, %d) A=(%d, %d, %d) B=(%d, %d, %d)\n",
-            --     --          Ccolor.x, Ccolor.y, Ccolor.z,
-            --     --          Acolor.x, Acolor.y, Acolor.z,
-            --     --          Bcolor.x, Bcolor.y, Bcolor.z)
-
-            --     dgemm(ABlock, BBlock, CBlock)
-            --     update_filled_blocks(filled_blocks, Acolor, Bcolor, Ccolor)
-
-            --   end
-            -- end
             fused_dgemm(mat_part[A_color], mat_part[B_color], mat_part[C_color],
                         cluster_bounds_part[A_color], cluster_bounds_part[B_color], cluster_bounds_part[C_color],
                         filled_A_colors, filled_B_colors, col_cluster_size,
@@ -1278,9 +1227,8 @@ task main()
       dtrsv(pivot, bp, cblas.CblasLower, cblas.CblasTrans)
 
       for level = par_level+1, levels do
-        for sep_idx = [int](math.pow(2, level))-1, -1, -1 do
+        for sep_idx = [int](par_idx*math.pow(2, level-par_level)), [int]((par_idx+1)*math.pow(2, level-par_level)) do
           var sep = tree[level][sep_idx]
-
           var A = mat_part[{par_sep, sep}]
           var sizeA = A.bounds.hi - A.bounds.lo + {1, 1}
           var X = Bpart[par_sep]
