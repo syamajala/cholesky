@@ -929,6 +929,7 @@ task main()
   var allocated_cluster_blocks = find_index_space_3d(levels, cluster_blocks, tree, clusters)
   var allocated_cluster_blocks_part = partition(cluster_blocks, ispace(int1d, 2))
   var allocated_cluster_blocks_ispace = allocated_cluster_blocks_part[1].ispace
+  c.printf("Sparse ispace: %d\n", allocated_blocks_ispace.volume)
 
   var filled_blocks = region(allocated_cluster_blocks_ispace, Filled)
   fill(filled_blocks.nz, -1)
@@ -940,7 +941,6 @@ task main()
   fill(cluster_bounds.sep, int2d{-1, -1})
   fill(cluster_bounds.bounds, rect2d{lo=int2d{0, 0}, hi=int2d{-1, -1}})
   var cluster_bounds_part = partition_cluster_bounds_by_sep(cluster_bounds, num_separators)
-  var cpart = partition_cluster_bounds_by_cluster(cluster_bounds)
 
   for level = levels-1, -1, -1 do
 
