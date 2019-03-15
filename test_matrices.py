@@ -108,3 +108,25 @@ class TestMatrices():
         run(**args)
         assert check_matrix(args['mat'], args['separators'], args['factored_mat']) == True
         assert check_solution(args['mat'], args['b'], args['solution']) == True
+
+    def test_3375x3375(self):
+
+        input_prefix = "tests/lapl_3375x3375"
+        output_prefix = os.path.join(input_prefix, "output")
+
+        if os.path.exists(output_prefix):
+            shutil.rmtree(output_prefix)
+
+        os.makedirs(output_prefix)
+
+        args = {"mat": "lapl_15_3.mtx",
+                "b": "B_3375x1.mtx",
+                "separators": "lapl_15_3_ord_5.txt",
+                "clusters": "lapl_15_3_clust_5.txt",
+                "factored_mat": "factored_15_3.mtx",
+                "solution": "solution_3375x1.mtx"}
+        args = generate_args(args, input_prefix, output_prefix)
+
+        run(**args)
+        assert check_matrix(args['mat'], args['separators'], args['factored_mat']) == True
+        # assert check_solution(args['mat'], args['b'], args['solution']) == True
