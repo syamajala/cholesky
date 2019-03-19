@@ -5,6 +5,7 @@ include(GNUInstallDirs)
 
 add_library(mmio SHARED mmio.c mnd.c)
 set_target_properties(mmio PROPERTIES PUBLIC_HEADER "mmio.h mnd.h")
+target_compile_options(mmio PRIVATE -I $ENV{LG_RT_DIR})
 install(TARGETS mmio
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})

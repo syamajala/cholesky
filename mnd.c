@@ -17,6 +17,52 @@
 #include <string.h>
 #include <math.h>
 
+
+SepInfo read_separators(char *file,
+                        int dim,
+                        legion_runtime_t runtime,
+                        legion_context_t context,
+                        legion_index_space_t is,
+                        legion_physical_region_t pr[],
+                        legion_field_id_t fld[])
+{
+  char *line = NULL;
+  ssize_t read = 0;
+  int i = 0;
+  FILE *fp = fopen(file, "r");
+  legion_accessor_array_1d_t i_accessor = legion_physical_region_get_field_accessor_array_1d(pr[0], fld[0]);
+  legion_accessor_array_1d_t sep_accessor = legion_physical_region_get_field_accessor_array_1d(pr[1], fld[1]);
+  legion_index_iterator_t it = legion_index_iterator_create(runtime, context, is);
+  SepInfo info;
+
+  while ((read = getline(&line, &dim, fp)) != -1) {
+    if (i == 0)
+    {
+      info.levels = atoi(&(line[0]));
+      info.num_separators = atoi(&(line[1]));
+      ++i;
+
+      continue;
+    }
+
+    char *rows = strtok(line, ";");
+    int separator = atoi(&rows[0])+1;
+    rows = strtok(NULL, ",");
+    while (rows != NULL)
+    {
+      int row = atoi(&rows[0]);
+      legion_ptr_t point = legion_index_iterator_next(it);
+      legion_accessor_array_1d_write(sep_accessor, point, &separator, sizeof(int));
+      legion_accessor_array_1d_write(i_accessor, point, &row, sizeof(int));
+      rows = strtok(NULL, ",");
+    }
+    ++i;
+  }
+
+  fclose(fp);
+  return info;
+}
+
 int*** read_clusters(char *file, int num_separators, int max_intervals, int max_interval_size)
 {
   // clusters[separator][interval][dof] = dof of permuted matrix
@@ -151,95 +197,6 @@ int*** read_clusters2(char *file, size_t len)
     free(line);
 
   return clusters;
-}
-
-int** build_separator_tree(int **separators)
-{
-  int levels = separators[0][0];
-  int num_separators = separators[0][1];
-
-  int **tree = (int **)malloc(levels*sizeof(int*));
-  for(int level = 0; level < levels; level++)
-  {
-    int elems = pow(2, level);
-    tree[level] = (int *)malloc(elems*sizeof(int));
-
-    for(int n = 0; n < elems; n++)
-    {
-      tree[level][n] = num_separators;
-      num_separators--;
-    }
-  }
-  return tree;
-}
-
-int** read_separators(char *file, size_t len)
-{
-  char *line = NULL;
-  ssize_t read = 0;
-  int i = 0;
-  FILE *fp = fopen(file, "r");
-  int **separators = NULL;
-
-  while ((read = getline(&line, &len, fp)) != -1) {
-    if (i == 0)
-    {
-      int levels = atoi(&(line[0]));
-      int num_separators = atoi(&(line[1]));
-
-      separators = (int **)malloc((num_separators+1) * sizeof(int *));
-      separators[0] = (int *)malloc(3 * sizeof(int));
-
-      separators[0][0] = levels;
-      separators[0][1] = num_separators;
-      separators[0][2] = 0;
-      ++i;
-
-      continue;
-    }
-
-    int temp_row[len];
-    char *rows = strtok(line, ";");
-    int separator = atoi(&rows[0])+1;
-    int num_rows = 0;
-    rows = strtok(NULL, ",");
-
-    while (rows != NULL)
-    {
-      int row = atoi(&rows[0]);
-      temp_row[num_rows] = row;
-      num_rows++;
-      rows = strtok(NULL, ",");
-    }
-    separators[separator] = (int *)malloc((num_rows+1) * sizeof(int));
-    memcpy(&(separators[separator][1]), temp_row, num_rows*sizeof(int));
-    separators[separator][0] = num_rows;
-    ++i;
-  }
-
-  fclose(fp);
-  if (line)
-    free(line);
-
-  return separators;
-}
-
-void print_separators(int **separators)
-{
-  printf("levels: %d\n", separators[0][0]);
-  printf("separators: %d\n", separators[0][1]);
-  int num_separators = separators[0][1];
-
-  for(int separator = 1; separator <= num_separators; separator++)
-  {
-    int separator_size = separators[separator][0];
-    printf("separator %d size %d: ", separator, separator_size);
-    for(int row = 1; row <= separator_size; row++)
-    {
-      printf("%d ", separators[separator][row]);
-    }
-    printf("\n");
-  }
 }
 
 void print_clusters(int ***clusters, int num_separators)
