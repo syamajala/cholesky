@@ -404,22 +404,21 @@ task partition_separators(depth                 : int,
                           tree                  : partition(disjoint, tree_region, ispace(int1d)),
                           interval              : int,
                           clusters              : &&&int,
-                          block_bounds_region   : region(ispace(int2d), Block),
-                          block_bounds          : partition(disjoint, block_bounds_region, ispace(int2d)),
+                          block_bounds          : region(ispace(int2d), Block),
                           cluster_bounds_region : region(ispace(int3d), Cluster),
                           cluster_bounds        : partition(disjoint, cluster_bounds_region, ispace(int2d)),
                           debug                 : bool)
 where
-  reads(tree_region, block_bounds_region), reads writes(cluster_bounds_region)
+  reads(tree_region, block_bounds), reads writes(cluster_bounds_region)
 do
   for lvl = 0, depth+1 do
     var level = tree[lvl]
     for sep_idx in level.ispace do
       var row = level[sep_idx].node
-      -- c.printf("Partitioning: %d %d\n", row, row)
       var block_color = int2d{row, row}
       var block = block_bounds[block_color].bounds
       var cluster = cluster_bounds[block_color]
+      -- c.printf("Partitioning: %d %d Bounds: %d %d %d %d\n", row, row, block.lo.x, block.lo.y, block.hi.x, block.hi.y)
       partition_separator(cluster, block_color, block, interval, clusters, debug)
 
       for clvl = lvl+1, depth+1 do
@@ -1011,16 +1010,16 @@ task main()
   var allocated_blocks_part = partition(blocks, ispace(int1d, 2))
   var allocated_blocks_ispace = allocated_blocks_part[1].ispace
 
-  var block_bounds_region = region(allocated_blocks_ispace, Block)
-  fill(block_bounds_region.sep, int2d{-1, -1})
-  fill(block_bounds_region.bounds, rect2d{lo=int2d{0, 0}, hi=int2d{-1, -1}})
+  var block_bounds = region(allocated_blocks_ispace, Block)
+  fill(block_bounds.sep, int2d{-1, -1})
+  fill(block_bounds.bounds, rect2d{lo=int2d{0, 0}, hi=int2d{-1, -1}})
 
   partition_matrix(sepinfo, separators_region, separators,
                    tree_region, tree,
-                   banner, mat, block_bounds_region, debug)
+                   banner, mat, block_bounds, debug)
 
-  var block_bounds = partition(block_bounds_region.sep, allocated_blocks_ispace)
-  var mat_part = partition_by_image_range(mat, block_bounds_region, block_bounds)
+  var block_bounds_part = partition(block_bounds.sep, allocated_blocks_ispace)
+  var mat_part = partition_by_image_range(mat, block_bounds, block_bounds_part)
 
   var nz = 0
   var interval = 0
@@ -1074,7 +1073,7 @@ task main()
 
     partition_separators(lvl, tree_region, tree,
                          interval, clusters,
-                         block_bounds_region, block_bounds,
+                         block_bounds,
                          cluster_bounds_region, cluster_bounds,
                          debug)
 
@@ -1207,23 +1206,12 @@ task main()
     write_matrix(mat, mat_part, factor_file, banner)
   end
 
-  -- if c.strcmp(b_file, '') == 0 then
-  --   __fence(__execution, __block)
+  if c.strcmp(b_file, '') == 0 then
+    __fence(__execution, __block)
 
-  --   for i = 0, num_separators+1 do
-  --     c.free(separators[i])
-  --   end
-  --   c.free(separators)
-
-  --   for i = 0, levels do
-  --     c.free(tree[i])
-  --   end
-
-  --   c.free(tree)
-
-  --   mnd.delete_entries()
-  --   return
-  -- end
+    mnd.delete_entries()
+    return
+  end
 
   -- var Bentries = read_b(b_file, banner.N)
   -- var B = region(ispace(int1d, banner.N), double)
