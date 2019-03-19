@@ -196,7 +196,7 @@ terra gen_filename(level:int, Ax:int, Ay:int, Bx:int, By:int, Cx:int, Cy:int, op
 end
 
 task write_blocks(mat: region(ispace(int2d), double), mat_part: partition(disjoint, mat, ispace(int2d)),
-                  level:int, A:int2d, B:int2d, C:int2d, op:regentlib.string, banner:MMatBanner, output_dir:regentlib.string)
+                  level:int, A:int2d, B:int2d, C:int2d, operation:rawstring, banner:MMatBanner, output_dir:regentlib.string)
 where
   reads(mat)
 do
@@ -206,7 +206,6 @@ do
   var block_filename = gen_filename(level, A.x, A.y, B.x, B.y, C.x, C.y, operation, false, output_dir)
   var file = c.fopen(block_filename, 'w')
 
-  var operation = [rawstring](op)
   if operation == "POTRF" then
     c.fprintf(file, "Level: %d POTRF A=(%d, %d)\n", level, A.x, A.y)
   elseif operation == "TRSM" then
