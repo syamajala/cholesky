@@ -76,7 +76,7 @@ fspace ClusterBounds {
   sep: int2d,
 }
 
-terra read_matrix_banner(file:&c.FILE)
+terra read_matrix_banner(file : &c.FILE)
   var banner:MMatBanner
   var ret:int
 
@@ -271,15 +271,15 @@ do
 end
 
 __demand(__leaf)
-task partition_matrix(sepinfo                 : mnd.SepInfo,
-                      separators_region       : region(ispace(int1d), SepIndex),
-                      separators              : partition(disjoint, separators_region, ispace(int1d)),
-                      tree_region             : region(ispace(int1d), TreeNode),
-                      tree                    : partition(disjoint, tree_region, ispace(int1d)),
-                      banner                  : MMatBanner,
-                      mat                     : region(ispace(int2d), double),
-                      block_bounds            : region(ispace(int2d), BlockBounds),
-                      debug                   : bool)
+task partition_matrix(sepinfo           : mnd.SepInfo,
+                      separators_region : region(ispace(int1d), SepIndex),
+                      separators        : partition(disjoint, separators_region, ispace(int1d)),
+                      tree_region       : region(ispace(int1d), TreeNode),
+                      tree              : partition(disjoint, tree_region, ispace(int1d)),
+                      banner            : MMatBanner,
+                      mat               : region(ispace(int2d), double),
+                      block_bounds      : region(ispace(int2d), BlockBounds),
+                      debug             : bool)
 where
   reads(separators_region, tree_region), reads writes(block_bounds)
 do
@@ -364,7 +364,7 @@ do
 
   if debug then
     c.printf("\t\tPartitioning (%d, %d) Cluster: %d Rows: %d Cols: %d\n",
-             row_sep, col_sep, interval, row_cluster_size-1, col_cluster_size-1)
+             row_sep, col_sep, interval, row_cluster_size, col_cluster_size)
   end
 
   for row = 0, row_cluster_size do
@@ -372,8 +372,9 @@ do
     var bottom = row_cluster[interval][row+row_lo+1].idx
 
     for i = interval-1, -1, -1 do
-      top = row_cluster[i][top+1].idx
-      bottom = row_cluster[i][bottom+1].idx
+      var row_lo = row_cluster[i].bounds.lo
+      top = row_cluster[i][top+row_lo].idx
+      bottom = row_cluster[i][bottom+row_lo].idx
     end
 
     for col = 0, col_cluster_size do
@@ -381,8 +382,9 @@ do
       var right = col_cluster[interval][col+col_lo+1].idx
 
       for i = interval-1, -1, -1 do
-        left = col_cluster[i][left+1].idx
-        right = col_cluster[i][right+1].idx
+        var col_lo = col_cluster[i].bounds.lo
+        left = col_cluster[i][left+col_lo].idx
+        right = col_cluster[i][right+col_lo].idx
       end
 
       var part_size = int2d{x = bottom - top - 1, y = right - left - 1}
@@ -563,16 +565,19 @@ do
 end
 
 --__demand(__inline)
-task merge_filled_blocks(allocated_blocks:ispace(int2d), filled_blocks:region(ispace(int3d), Filled),
-                         num_separators:int, interval:int, clusters:&&&int)
+task merge_filled_blocks(allocated_blocks : ispace(int2d),
+                         filled_blocks    : region(ispace(int3d), Filled),
+                         interval         : int,
+                         clusters_region  : region(ispace(int1d), ClusterIndex),
+                         clusters_sep     : partition(disjoint, clusters_region, ispace(int1d)),
+                         clusters_int     : partition(disjoint, clusters_region, ispace(int1d)),
+                         clusters         : cross_product(clusters_sep, clusters_int))
 where
-  reads writes(filled_blocks)
+  reads(clusters_region), reads writes(filled_blocks)
 do
   var blocks = region(filled_blocks.ispace, Filled)
   copy(filled_blocks, blocks)
 
-  -- max_int_size = clusters[num_separators][interval][0]
-  -- filled_blocks = region(ispace(int3d {num_separators, num_separators, max_int_size}, {1, 1, 0}), bool)
   fill(filled_blocks.nz, 0)
   fill(filled_blocks.filled, 1)
   fill(filled_blocks.sep, int2d{-1, -1})
@@ -582,26 +587,28 @@ do
     var row_sep = block.x
     var col_sep = block.y
 
-    if interval < clusters[0][0][row_sep] and interval < clusters[0][0][col_sep] then
+    var row_cluster = clusters[row_sep][interval]
+    var col_cluster = clusters[col_sep][interval]
 
-      var row_cluster = clusters[row_sep][interval]
-      var row_cluster_size = row_cluster[0]
+    if row_cluster.volume ~= 0 and col_cluster.volume ~= 0 then
+      var row_cluster_size = row_cluster.volume-1
+      var row_lo = row_cluster.bounds.lo
 
-      var col_cluster = clusters[col_sep][interval]
-      var col_cluster_size = col_cluster[0]
+      var col_cluster_size = col_cluster.volume-1
+      var col_lo = col_cluster.bounds.lo
 
-      var prev_cols = clusters[col_sep][interval-1][0]-1
+      var prev_cols = clusters[col_sep][interval-1].volume-1
 
-      for row = 1, row_cluster_size do
+      for row = 0, row_cluster_size do
 
-        var top = row_cluster[row]
-        var bottom = row_cluster[row+1]
+        var top = row_cluster[row+row_lo].idx
+        var bottom = row_cluster[row+row_lo+1].idx
 
-        for col = 1, col_cluster_size do
+        for col = 0, col_cluster_size do
 
-          var left = col_cluster[col]
-          var right = col_cluster[col+1]
-          var new_id = int3d{row_sep, col_sep, (row-1)*(col_cluster_size-1)+(col-1)}
+          var left = col_cluster[col+col_lo].idx
+          var right = col_cluster[col+col_lo+1].idx
+          var new_id = int3d{row_sep, col_sep, row*col_cluster_size+col}
           -- c.printf("New Id: %d %d %d -> ", new_id.x, new_id.y, new_id.z)
 
           for i = top, bottom do
@@ -625,11 +632,8 @@ do
   -- end
 end
 
---__demand(__inline)
-task find_color_space(color:int2d, interval:int, clusters:&&&int, filled_ispace:ispace(int3d))
-  var rows = clusters[color.x][interval][0]-1
-  var cols = clusters[color.y][interval][0]-1
-
+-- __demand(__inline)
+task find_color_space(color:int2d, rows:int, cols:int, filled_ispace:ispace(int3d))
   var colors = ispace(int3d, {1, 1, rows*cols}, {color.x, color.y, 0})
   return filled_ispace & colors
 end
@@ -848,7 +852,7 @@ do
     for Bcolor in filled_rB do
       var col = Bcolor.z
 
-      var Ccolor = int3d{Acolor.x, Bcolor.x, row*(col_cluster_size-1)+col}
+      var Ccolor = int3d{Acolor.x, Bcolor.x, row*col_cluster_size+col}
       var rectC = cluster_bounds_rC[Ccolor].bounds
       var sizeC:int2d = rectC.hi - rectC.lo + {1, 1}
 
@@ -911,7 +915,7 @@ do
     for Bcolor in filled_rB do
       var col = Bcolor.z
 
-      var Ccolor = int3d{Acolor.x, Bcolor.x, row*(col_cluster_size-1)+col}
+      var Ccolor = int3d{Acolor.x, Bcolor.x, row*col_cluster_size+col}
       var rectC = cluster_bounds_rC[Ccolor].bounds
       var sizeC:int2d = rectC.hi - rectC.lo + {1, 1}
 
@@ -1114,143 +1118,153 @@ task main()
                          interval, clusters_region, clusters_sep, clusters_int, clusters,
                          block_bounds, cluster_bounds_region, cluster_bounds,
                          debug)
+
+    var filled_part = partition(filled_blocks.filled, ispace(int1d, 2))
+    var filled_ispace = filled_part[0].ispace
+    var level = tree[lvl]
+
+    __demand(__parallel)
+    for sep_idx in level.ispace do
+      var sep = level[sep_idx].node
+      var pivot_color = int2d{sep, sep}
+      var row_size = clusters[sep][interval].volume-1
+      var filled_pivot = find_color_space(pivot_color, row_size, row_size, filled_ispace)
+
+      fused_dpotrf(mat_part[pivot_color], cluster_bounds[pivot_color], filled_pivot)
+
+      if debug then
+        var pivot = mat_part[pivot_color]
+        var sizeA = pivot.bounds.hi - pivot.bounds.lo + {1, 1}
+
+        c.printf("Level: %d POTRF A=(%d, %d)\nSize: %dx%d Lo: %d %d Hi: %d %d\n\n",
+                 lvl, sep, sep, sizeA.x, sizeA.y,
+                 pivot.bounds.lo.x, pivot.bounds.lo.y, pivot.bounds.hi.x, pivot.bounds.hi.y)
+
+        write_blocks(mat, mat_part, lvl, pivot_color, int2d{0, 0}, int2d{0, 0}, "POTRF", banner, debug_path)
+      end
+    end
+
+    __demand(__parallel)
+    for sep_idx in level.ispace do
+      var sep = level[sep_idx].node
+      var pivot_color = int2d{sep, sep}
+      var row_size = clusters[sep][interval].volume-1
+      var filled_pivot = find_color_space(pivot_color, row_size, row_size, filled_ispace)
+
+      var par_idx = [int](sep_idx)
+      for par_lvl = lvl-1, -1, -1 do
+
+        par_idx = [int](par_idx/2)
+        var par_level = tree[par_lvl]
+        var par_sep = par_level[par_idx].node
+        var off_diag_color = int2d{par_sep, sep}
+        var row_size = clusters[par_sep][interval].volume-1
+        var col_size = clusters[sep][interval].volume-1
+        var filled_off_diag = find_color_space(off_diag_color, row_size, col_size, filled_ispace)
+
+        fused_dtrsm(mat_part[pivot_color], mat_part[off_diag_color],
+                    cluster_bounds[pivot_color], cluster_bounds[off_diag_color],
+                    filled_pivot, filled_off_diag)
+
+        if debug then
+          var pivot = mat_part[pivot_color]
+          var sizeA = pivot.bounds.hi - pivot.bounds.lo + {1, 1}
+          var off_diag = mat_part[off_diag_color]
+          var sizeB = off_diag.bounds.hi - off_diag.bounds.lo + {1, 1}
+
+          c.printf("\tLevel: %d TRSM A=(%d, %d) B=(%d, %d)\n\tSizeA: %dx%d Lo: %d %d Hi: %d %d SizeB: %dx%d Lo: %d %d Hi: %d %d\n\n",
+                   par_lvl, sep, sep, par_sep, sep,
+                   sizeA.x, sizeA.y, pivot.bounds.lo.x, pivot.bounds.lo.y, pivot.bounds.hi.x, pivot.bounds.hi.y,
+                   sizeB.x, sizeB.y, off_diag.bounds.lo.x, off_diag.bounds.lo.y, off_diag.bounds.hi.x, off_diag.bounds.hi.y)
+
+          write_blocks(mat, mat_part, par_lvl, pivot_color, off_diag_color, int2d{0, 0}, "TRSM", banner, debug_path)
+        end
+      end
+    end
+
+    __demand(__parallel)
+    for sep_idx in level.ispace do
+      var sep = level[sep_idx].node
+      var par_idx = [int](sep_idx)
+
+      for par_lvl = lvl-1, -1, -1 do
+        par_idx = [int](par_idx/2)
+        var par_level = tree[par_lvl]
+        var par_sep = par_level[par_idx].node
+
+        var grandpar_idx = [int](par_idx)
+        for grandpar_lvl = par_lvl, -1, -1 do
+          var grandpar_level = tree[grandpar_lvl]
+          var grandpar_sep = grandpar_level[grandpar_idx].node
+
+          var A_color = int2d{grandpar_sep, sep}
+          var B_color = int2d{par_sep, sep}
+          var C_color = int2d{grandpar_sep, par_sep}
+
+          var col_cluster_size = clusters[par_sep][interval].volume-1
+
+          var row_size = clusters[grandpar_sep][interval].volume-1
+          var col_size = clusters[sep][interval].volume-1
+          var filled_A_colors = find_color_space(A_color, row_size, col_size, filled_ispace)
+          row_size = clusters[par_sep][interval].volume-1
+          col_size = clusters[sep][interval].volume-1
+          var filled_B_colors = find_color_space(B_color, row_size, col_size, filled_ispace)
+
+          if grandpar_sep == par_sep then
+            fused_dsyrk(mat_part[A_color], mat_part[B_color], mat_part[C_color],
+                        cluster_bounds[A_color], cluster_bounds[B_color], cluster_bounds[C_color],
+                        filled_A_colors, filled_B_colors, col_cluster_size,
+                        filled_block_part[A_color], filled_block_part[B_color], filled_block_part[C_color])
+          else
+            fused_dgemm(mat_part[A_color], mat_part[B_color], mat_part[C_color],
+                        cluster_bounds[A_color], cluster_bounds[B_color], cluster_bounds[C_color],
+                        filled_A_colors, filled_B_colors, col_cluster_size,
+                        filled_block_part[A_color], filled_block_part[B_color], filled_block_part[C_color])
+          end
+
+          if debug then
+            var A = mat_part[A_color]
+            var B = mat_part[B_color]
+            var C = mat_part[C_color]
+            var sizeA = A.bounds.hi - A.bounds.lo + {1, 1}
+            var sizeB = B.bounds.hi - B.bounds.lo + {1, 1}
+            var sizeC = C.bounds.hi - C.bounds.lo + {1, 1}
+
+            c.printf("\tLevel: %d GEMM A=(%d, %d) B=(%d, %d) C=(%d, %d)\n\tSizeA: %dx%d Lo: %d %d Hi: %d %d SizeB: %dx%d Lo: %d %d Hi: %d %d SizeC: %dx%d Lo: %d %d Hi: %d %d\n\n",
+                     grandpar_lvl,
+                     grandpar_sep, sep,
+                     par_sep, sep,
+                     grandpar_sep, par_sep,
+                     sizeA.x, sizeA.y, A.bounds.lo.x, A.bounds.lo.y, A.bounds.hi.x, A.bounds.hi.y,
+                     sizeB.x, sizeB.y, B.bounds.lo.x, B.bounds.lo.y, B.bounds.hi.x, B.bounds.hi.y,
+                     sizeC.x, sizeC.y, C.bounds.lo.x, C.bounds.lo.y, C.bounds.hi.x, C.bounds.hi.y)
+
+            write_blocks(mat, mat_part, grandpar_lvl, A_color, B_color, C_color, "GEMM", banner, debug_path)
+          end
+          grandpar_idx = [int](grandpar_idx/2)
+        end
+      end
+    end
+
+    interval += 1
+    if interval < levels then
+      merge_filled_blocks(allocated_blocks_ispace, filled_blocks, interval,
+                          clusters_region, clusters_sep, clusters_int, clusters)
+    end
   end
 
-  --   var filled_part = partition(filled_blocks.filled, ispace(int1d, 2))
-  --   var filled_ispace = filled_part[0].ispace
-  --   var level = tree[lvl]
+  c.printf("Done factoring.\n")
 
-  --   __demand(__parallel)
-  --   for sep_idx in level.ispace do
-  --     var sep = level[sep_idx].node
-  --     var pivot_color = int2d{sep, sep}
-  --     var filled_pivot = find_color_space(pivot_color, interval, clusters, filled_ispace)
+  if c.strcmp(factor_file, '') ~= 0 then
+    write_matrix(mat, mat_part, factor_file, banner)
+  end
 
-  --     fused_dpotrf(mat_part[pivot_color], cluster_bounds[pivot_color], filled_pivot)
+  if c.strcmp(b_file, '') == 0 then
+    __fence(__execution, __block)
 
-  --     if debug then
-  --       var pivot = mat_part[pivot_color]
-  --       var sizeA = pivot.bounds.hi - pivot.bounds.lo + {1, 1}
-
-  --       c.printf("Level: %d POTRF A=(%d, %d)\nSize: %dx%d Lo: %d %d Hi: %d %d\n\n",
-  --                lvl, sep, sep, sizeA.x, sizeA.y,
-  --                pivot.bounds.lo.x, pivot.bounds.lo.y, pivot.bounds.hi.x, pivot.bounds.hi.y)
-
-  --       write_blocks(mat, mat_part, lvl, pivot_color, int2d{0, 0}, int2d{0, 0}, "POTRF", banner, debug_path)
-  --     end
-  --   end
-
-  --   __demand(__parallel)
-  --   for sep_idx in level.ispace do
-  --     var sep = level[sep_idx].node
-  --     var pivot_color = int2d{sep, sep}
-  --     var filled_pivot = find_color_space(pivot_color, interval, clusters, filled_ispace)
-
-  --     var par_idx = [int](sep_idx)
-  --     for par_lvl = lvl-1, -1, -1 do
-
-  --       par_idx = [int](par_idx/2)
-  --       var par_level = tree[par_lvl]
-  --       var par_sep = par_level[par_idx].node
-  --       var off_diag_color = int2d{par_sep, sep}
-  --       var filled_off_diag = find_color_space(off_diag_color, interval, clusters, filled_ispace)
-
-  --       fused_dtrsm(mat_part[pivot_color], mat_part[off_diag_color],
-  --                   cluster_bounds[pivot_color], cluster_bounds[off_diag_color],
-  --                   filled_pivot, filled_off_diag)
-
-  --       if debug then
-  --         var pivot = mat_part[pivot_color]
-  --         var sizeA = pivot.bounds.hi - pivot.bounds.lo + {1, 1}
-  --         var off_diag = mat_part[off_diag_color]
-  --         var sizeB = off_diag.bounds.hi - off_diag.bounds.lo + {1, 1}
-
-  --         c.printf("\tLevel: %d TRSM A=(%d, %d) B=(%d, %d)\n\tSizeA: %dx%d Lo: %d %d Hi: %d %d SizeB: %dx%d Lo: %d %d Hi: %d %d\n\n",
-  --                  par_lvl, sep, sep, par_sep, sep,
-  --                  sizeA.x, sizeA.y, pivot.bounds.lo.x, pivot.bounds.lo.y, pivot.bounds.hi.x, pivot.bounds.hi.y,
-  --                  sizeB.x, sizeB.y, off_diag.bounds.lo.x, off_diag.bounds.lo.y, off_diag.bounds.hi.x, off_diag.bounds.hi.y)
-
-  --         write_blocks(mat, mat_part, par_lvl, pivot_color, off_diag_color, int2d{0, 0}, "TRSM", banner, debug_path)
-  --       end
-  --     end
-  --   end
-
-  --   __demand(__parallel)
-  --   for sep_idx in level.ispace do
-  --     var sep = level[sep_idx].node
-  --     var par_idx = [int](sep_idx)
-
-  --     for par_lvl = lvl-1, -1, -1 do
-  --       par_idx = [int](par_idx/2)
-  --       var par_level = tree[par_lvl]
-  --       var par_sep = par_level[par_idx].node
-
-  --       var grandpar_idx = [int](par_idx)
-  --       for grandpar_lvl = par_lvl, -1, -1 do
-  --         var grandpar_level = tree[grandpar_lvl]
-  --         var grandpar_sep = grandpar_level[grandpar_idx].node
-
-  --         var A_color = int2d{grandpar_sep, sep}
-  --         var B_color = int2d{par_sep, sep}
-  --         var C_color = int2d{grandpar_sep, par_sep}
-
-  --         var col_cluster_size = clusters[par_sep][interval][0]
-
-  --         var filled_A_colors = find_color_space(A_color, interval, clusters, filled_ispace)
-  --         var filled_B_colors = find_color_space(B_color, interval, clusters, filled_ispace)
-
-  --         if grandpar_sep == par_sep then
-  --           fused_dsyrk(mat_part[A_color], mat_part[B_color], mat_part[C_color],
-  --                       cluster_bounds[A_color], cluster_bounds[B_color], cluster_bounds[C_color],
-  --                       filled_A_colors, filled_B_colors, col_cluster_size,
-  --                       filled_block_part[A_color], filled_block_part[B_color], filled_block_part[C_color])
-  --         else
-  --           fused_dgemm(mat_part[A_color], mat_part[B_color], mat_part[C_color],
-  --                       cluster_bounds[A_color], cluster_bounds[B_color], cluster_bounds[C_color],
-  --                       filled_A_colors, filled_B_colors, col_cluster_size,
-  --                       filled_block_part[A_color], filled_block_part[B_color], filled_block_part[C_color])
-  --         end
-
-  --         if debug then
-  --           var A = mat_part[A_color]
-  --           var B = mat_part[B_color]
-  --           var C = mat_part[C_color]
-  --           var sizeA = A.bounds.hi - A.bounds.lo + {1, 1}
-  --           var sizeB = B.bounds.hi - B.bounds.lo + {1, 1}
-  --           var sizeC = C.bounds.hi - C.bounds.lo + {1, 1}
-
-  --           c.printf("\tLevel: %d GEMM A=(%d, %d) B=(%d, %d) C=(%d, %d)\n\tSizeA: %dx%d Lo: %d %d Hi: %d %d SizeB: %dx%d Lo: %d %d Hi: %d %d SizeC: %dx%d Lo: %d %d Hi: %d %d\n\n",
-  --                    grandpar_lvl,
-  --                    grandpar_sep, sep,
-  --                    par_sep, sep,
-  --                    grandpar_sep, par_sep,
-  --                    sizeA.x, sizeA.y, A.bounds.lo.x, A.bounds.lo.y, A.bounds.hi.x, A.bounds.hi.y,
-  --                    sizeB.x, sizeB.y, B.bounds.lo.x, B.bounds.lo.y, B.bounds.hi.x, B.bounds.hi.y,
-  --                    sizeC.x, sizeC.y, C.bounds.lo.x, C.bounds.lo.y, C.bounds.hi.x, C.bounds.hi.y)
-
-  --           write_blocks(mat, mat_part, grandpar_lvl, A_color, B_color, C_color, "GEMM", banner, debug_path)
-  --         end
-  --         grandpar_idx = [int](grandpar_idx/2)
-  --       end
-  --     end
-  --   end
-
-  --   interval += 1
-  --   merge_filled_blocks(allocated_blocks_ispace, filled_blocks, num_separators, interval, clusters)
-  -- end
-
-  -- c.printf("Done factoring.\n")
-
-  -- if c.strcmp(factor_file, '') ~= 0 then
-  --   write_matrix(mat, mat_part, factor_file, banner)
-  -- end
-
-  -- if c.strcmp(b_file, '') == 0 then
-  --   __fence(__execution, __block)
-
-  --   mnd.delete_entries()
-  --   return
-  -- end
+    mnd.delete_entries()
+    return
+  end
 
   -- var Bentries = read_b(b_file, banner.N)
   -- var B = region(ispace(int1d, banner.N), double)
