@@ -39,7 +39,7 @@ SepInfo read_separators(char *file,
     if (i == 0)
     {
       info.levels = atoi(&(line[0]));
-      info.num_separators = atoi(&(line[1]));
+      info.num_separators = atoi(&(line[2]));
       ++i;
 
       continue;
@@ -82,7 +82,6 @@ int read_clusters(char *file,
   legion_accessor_array_1d_t int_accessor = legion_physical_region_get_field_accessor_array_1d(pr[1], fld[1]);
   legion_accessor_array_1d_t sep_accessor = legion_physical_region_get_field_accessor_array_1d(pr[2], fld[2]);
   legion_index_iterator_t it = legion_index_iterator_create(runtime, context, is);
-  int done = 0;
 
   while ((read = getline(&line, &dim, fp)) != -1) {
     if (i == 0)
