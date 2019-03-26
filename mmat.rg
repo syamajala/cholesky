@@ -546,7 +546,7 @@ do
       filled_blocks[color].nz = nnz
 
       if nnz > 0 then
-        filled_blocks[color].filled = 0
+        filled_blocks[color].filled = 1
       end
 
       if debug then
@@ -1488,7 +1488,6 @@ task main()
   var filled_clusters_intervals = partition(filled_clusters_filled.interval, ispace(int1d, levels))
   var filled_clusters = cross_product(filled_clusters_sep, filled_clusters_intervals)
 
-
   c.printf("Filled: %d Expected: %d\n", nz, banner.NZ)
 
   if c.strcmp(permuted_matrix_file, '') ~= 0 then
@@ -1520,6 +1519,7 @@ task main()
         var sep = level[sep_idx].node
         var pivot_color = int2d{sep, sep}
         var filled_pivot = filled_clusters[pivot_color][interval]
+
         fused_dpotrf(mat_part[pivot_color], cluster_bounds[pivot_color], filled_pivot)
 
         if debug then
