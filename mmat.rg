@@ -619,7 +619,7 @@ do
               -- c.printf("%d ", old_id.z)
               filled_clusters[new_id].nz = filled_clusters[new_id].nz + blocks[old_id].nz
               if filled_clusters[new_id].nz > 0 then
-                filled_clusters[new_id].filled = 0
+                filled_clusters[new_id].filled = 1
               end
             end
           end
@@ -1152,12 +1152,7 @@ do
           var grandpar_level = tree[grandpar_lvl]
           var grandpar_sep = grandpar_level[grandpar_idx].node
 
-          -- var A_color = int2d{grandpar_sep, sep}
-          -- var B_color = int2d{par_sep, sep}
-          -- var C_color = int2d{grandpar_sep, par_sep}
-
           var col_cluster_size = clusters[par_sep][interval].volume-1
-
           var A_clusters = (clusters[grandpar_sep][interval].volume-1)*(clusters[sep][interval].volume-1)
           var B_clusters = (clusters[par_sep][interval].volume-1)*(clusters[sep][interval].volume-1)
 
@@ -1194,6 +1189,8 @@ do
       filled_clusters_region2[i].sep = int2d{j.x, j.y}
       filled_clusters_region2[i].interval = interval
       filled_clusters_region2[i].cluster = j.z
+      -- c.printf("Level: %d Interval: %d Cluster: %d %d %d Filled: %d\n",
+      --          lvl, interval, j.x, j.y, j.z, filled_clusters_region[j].filled)
       i += 1
     end
 
@@ -1629,10 +1626,6 @@ task main()
     end
 
     interval += 1
-    -- if interval < levels then
-    --   merge_filled_clusters(allocated_blocks_ispace, filled_clusters_region, interval,
-    --                         clusters_region, clusters_sep, clusters_int, clusters)
-    -- end
   end
 
   c.printf("Done factoring.\n")

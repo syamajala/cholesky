@@ -273,3 +273,6 @@ def generate_b(n):
     np.random.seed()
     a = np.random.randint(1, 11, size=(n, 1))
     scipy.io.mmwrite("B_%dx1.mtx" % n, a)
+
+
+#debug_factor("tests/lapl_400x400/lapl_20_2.mtx", "tests/lapl_400x400/lapl_20_2_ord_5.txt", "factored_matrix.mtx", "output", "steps")
