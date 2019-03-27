@@ -372,23 +372,27 @@ do
   end
 
   for row = 0, row_cluster_size do
-    var top = row_cluster[interval][row+row_lo].idx
-    var bottom = row_cluster[interval][row+row_lo+1].idx
+    var rowcluster = row_cluster[interval]
+    var top = rowcluster[row+row_lo].idx
+    var bottom = rowcluster[row+row_lo+1].idx
 
     for i = interval-1, -1, -1 do
-      var row_lo = row_cluster[i].bounds.lo
-      top = row_cluster[i][top+row_lo].idx
-      bottom = row_cluster[i][bottom+row_lo].idx
+      var rowcluster = row_cluster[i]
+      var row_lo = rowcluster.bounds.lo
+      top = rowcluster[top+row_lo].idx
+      bottom = rowcluster[bottom+row_lo].idx
     end
 
     for col = 0, col_cluster_size do
-      var left = col_cluster[interval][col+col_lo].idx
-      var right = col_cluster[interval][col+col_lo+1].idx
+      var colcluster = col_cluster[interval]
+      var left = colcluster[col+col_lo].idx
+      var right = colcluster[col+col_lo+1].idx
 
       for i = interval-1, -1, -1 do
-        var col_lo = col_cluster[i].bounds.lo
-        left = col_cluster[i][left+col_lo].idx
-        right = col_cluster[i][right+col_lo].idx
+        var colcluster = col_cluster[i]
+        var col_lo = colcluster.bounds.lo
+        left = colcluster[left+col_lo].idx
+        right = colcluster[right+col_lo].idx
       end
 
       var part_size = int2d{x = bottom - top - 1, y = right - left - 1}
@@ -418,7 +422,7 @@ do
   end
 end
 
-__demand(__leaf)
+__demand(__inline)
 task partition_separators(depth                  : int,
                           tree_region            : region(ispace(int1d), TreeNode),
                           tree                   : partition(disjoint, tree_region, ispace(int1d)),
