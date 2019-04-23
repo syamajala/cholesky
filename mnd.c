@@ -177,3 +177,33 @@ void read_matrix(char* file,
 
   fclose(fp);
 }
+
+void read_vector(char* file,
+                 int n,
+                 legion_runtime_t runtime,
+                 legion_context_t context,
+                 legion_index_space_t is,
+                 legion_physical_region_t pr[],
+                 legion_field_id_t fld[])
+{
+  FILE *fp = fopen(file, "r");
+
+  for(int i = 0; i < 3; i++)
+  {
+    char buff[1024];
+    fgets(buff, 1024, fp);
+  }
+
+  legion_accessor_array_1d_t val_accessor = legion_physical_region_get_field_accessor_array_1d(pr[0], fld[0]);
+  legion_index_iterator_t it = legion_index_iterator_create(runtime, context, is);
+
+  for(int i = 0; i < n; i++)
+  {
+    legion_ptr_t point = legion_index_iterator_next(it);
+    double val = 0.0;
+    fscanf(fp, "%lg\n", &val);
+    legion_accessor_array_1d_write(val_accessor, point, &val, sizeof(double));
+  }
+
+  fclose(fp);
+}

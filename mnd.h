@@ -19,7 +19,6 @@
 #include <stdlib.h>
 #include "legion/legion_c.h"
 
-
 typedef struct SepInfo {
   int levels;
   int num_separators;
@@ -43,6 +42,14 @@ int read_clusters(char *file,
 
 void read_matrix(char* file,
                  int nz,
+                 legion_runtime_t runtime,
+                 legion_context_t context,
+                 legion_index_space_t is,
+                 legion_physical_region_t pr[],
+                 legion_field_id_t fld[]);
+
+void read_vector(char* file,
+                 int n,
                  legion_runtime_t runtime,
                  legion_context_t context,
                  legion_index_space_t is,

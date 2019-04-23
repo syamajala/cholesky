@@ -31,51 +31,56 @@ terralib.linklibrary("libcblas.so")
 local cblas = terralib.includec("cblas.h")
 
 struct MMatBanner {
-  M:int
-  N:int
-  NZ:int
-  typecode:mmio.MM_typecode
+  M  : int
+  N  : int
+  NZ : int
+  typecode : mmio.MM_typecode
 }
 
 fspace MatrixEntry {
-  idx:int2d,
-  val:double
+  idx : int2d,
+  val : double
 }
 
 fspace SepIndex {
-  idx:int,
-  sep:int1d
+  idx : int,
+  sep : int1d
 }
 
 fspace ClusterIndex {
-  idx:int,
-  interval:int1d,
-  sep:int1d
+  idx      : int,
+  interval : int1d,
+  sep      : int1d
 }
 
 fspace TreeNode {
-  node:int,
-  level:int1d
+  node  : int,
+  level : int1d
 }
 
 fspace Filled {
-  nz:int,
-  filled:int1d,
-  sep:int2d,
-  interval:int1d,
-  cluster:int1d,
-  bounds:rect2d
+  nz       : int,
+  filled   : int1d,
+  sep      : int2d,
+  interval : int1d,
+  cluster  : int1d,
+  bounds   : rect2d
 }
 
 fspace BlockBounds {
-  bounds:rect2d,
-  sep: int2d
+  bounds : rect2d,
+  sep    : int2d
 }
 
 fspace ClusterBounds {
-  bounds:rect2d,
-  sep:int2d,
-  cluster:int3d
+  bounds  : rect2d,
+  sep     : int2d,
+  cluster : int3d
+}
+
+fspace VecBounds {
+  bounds : rect1d,
+  sep    : int1d
 }
 
 terra read_matrix_banner(file : regentlib.string)
@@ -222,9 +227,32 @@ do
   end
 end
 
-task partition_by_image_range(mat          : region(ispace(int2d), double),
-                              block_bounds : region(ispace(int2d), BlockBounds),
-                              block_part   : partition(disjoint, block_bounds, ispace(int2d)))
+task partition_vec_by_image_range(vec        : region(ispace(int1d), double),
+                                  vec_bounds : region(ispace(int1d), VecBounds),
+                                  vec_part   : partition(disjoint, vec_bounds, ispace(int1d)))
+where
+  reads(vec_bounds.bounds)
+do
+  var fid = __fields(vec_bounds)[0]
+
+  var ip = c.legion_index_partition_create_by_image_range(__runtime(),
+                                                          __context(),
+                                                          __raw(vec.ispace),
+                                                          __raw(vec_part),
+                                                          __raw(vec_bounds),
+                                                          fid,
+                                                          __raw(vec_bounds.ispace),
+                                                          c.DISJOINT_KIND,
+                                                          -1)
+
+  var raw_part = c.legion_logical_partition_create(__runtime(), __context(), __raw(vec), ip)
+
+  return __import_partition(disjoint, vec, vec_bounds.ispace, raw_part)
+end
+
+task partition_mat_by_image_range(mat          : region(ispace(int2d), double),
+                                  block_bounds : region(ispace(int2d), BlockBounds),
+                                  block_part   : partition(disjoint, block_bounds, ispace(int2d)))
 where
   reads(block_bounds.bounds)
 do
@@ -693,34 +721,18 @@ do
 end
 
 __demand(__leaf)
-task fill_b(separators:&&int, Bentries:&double, BP:region(ispace(int1d), double), Bcolor:int1d)
+task fill_b(separator : region(ispace(int1d), SepIndex),
+            Bentries  : region(ispace(int1d), double),
+            B         : region(ispace(int1d), double))
 where
-  reads writes(BP)
+  reads(separator, Bentries),
+  writes(B)
 do
-  var ib:int = [int](Bcolor)
-  var sep = separators[ib]
-  var sep_size = sep[0]
-
-  for i = 0, sep_size do
-    var idxi = sep[i+1]
-    BP[BP.bounds.lo + i] = Bentries[idxi]
-  end
-end
-
-__demand(__leaf)
-task unpermute_solution(separators:&&int, X:region(ispace(int1d), double), B:region(ispace(int1d), double))
-where
-  reads(B), reads writes(X)
-do
-  var num_separators = separators[0][1]
   var j = 0
-  for sep = 1, num_separators+1 do
-    var size = separators[sep][0]
-    for i = 1, size+1 do
-      var idxi = separators[sep][i]
-      X[idxi] = B[j]
-      j += 1
-    end
+  for i in separator.ispace do
+    var idxi = separator[i].idx
+    B[B.bounds.lo + j] = Bentries[idxi]
+    j += 1
   end
 end
 
@@ -1098,7 +1110,7 @@ task read_matrix(matrix_file    : regentlib.string,
                  NZ             : int,
                  entries_region : region(ispace(int2d), MatrixEntry))
 where
-  reads writes(entries_region)
+  writes(entries_region)
 do
   mnd.read_matrix(matrix_file, NZ,
                   __runtime(), __context(),
@@ -1123,7 +1135,7 @@ task read_separators(separator_file    : regentlib.string,
                      M                 : int,
                      separators_region : region(ispace(int1d), SepIndex))
 where
-  reads writes(separators_region)
+  writes(separators_region)
 do
   return mnd.read_separators(separator_file, M,
                              __runtime(), __context(),
@@ -1134,11 +1146,22 @@ task read_clusters(clusters_file   : regentlib.string,
                    M               : int,
                    clusters_region : region(ispace(int1d), ClusterIndex))
 where
-  reads writes(clusters_region)
+  writes(clusters_region)
 do
   return mnd.read_clusters(clusters_file, M,
                            __runtime(), __context(),
                            __raw(clusters_region.ispace), __physical(clusters_region), __fields(clusters_region))
+end
+
+task read_vector(vector_file   : regentlib.string,
+                 N             : int,
+                 vector_region : region(ispace(int1d), double))
+where
+  writes(vector_region)
+do
+  mnd.read_vector(vector_file, N,
+                  __runtime(), __context(),
+                  __raw(vector_region.ispace), __physical(vector_region), __fields(vector_region))
 end
 
 task compute_filled_clusters(levels                  : int,
@@ -1467,7 +1490,7 @@ task main()
                    banner, mat, block_bounds, debug)
 
   var block_bounds_part = partition(block_bounds.sep, allocated_blocks_ispace)
-  var mat_part = partition_by_image_range(mat, block_bounds, block_bounds_part)
+  var mat_part = partition_mat_by_image_range(mat, block_bounds, block_bounds_part)
 
   var nz = 0
   var interval = 0
@@ -1672,136 +1695,134 @@ task main()
     write_matrix(mat, mat_part, factor_file, banner)
   end
 
-  -- var Bentries = read_b(b_file, banner.N)
-  -- var B = region(ispace(int1d, banner.N), double)
-  -- var Bcoloring = c.legion_domain_point_coloring_create()
-  -- var Bprev_size = 0
-  -- var X = region(ispace(int1d, banner.N), double)
+  var Bentries = region(ispace(int1d, banner.N), double)
+  read_vector(b_file, banner.N, Bentries)
+  var Bprev_size = 0
+  var B = region(ispace(int1d, banner.N), double)
+  var X = region(ispace(int1d, banner.N), double)
 
-  -- for sep = 1, num_separators+1 do
-  --   var size = separators[sep][0]
-  --   var bounds = rect1d { Bprev_size, Bprev_size + size - 1}
-  --   -- c.printf("Separator: %d Lo: %d Hi: %d Size: %d 1\n", sep, bounds.lo, bounds.hi, bounds.hi - bounds.lo + 1)
-  --   var color:int1d = int1d{ sep }
-  --   c.legion_domain_point_coloring_color_domain(Bcoloring, color:to_domain_point(), c.legion_domain_from_rect_1d(bounds))
-  --   Bprev_size = Bprev_size + size
-  -- end
+  var vec_bounds = region(ispace(int1d, num_separators, 1), VecBounds)
+  fill(vec_bounds.bounds, rect1d{lo=int1d{0}, hi=int1d{-1}})
 
-  -- --c.printf("\n")
+  for sep = 1, num_separators+1 do
+    var size = separators[sep].volume
+    vec_bounds[sep].bounds = rect1d { int1d{Bprev_size}, int1d{Bprev_size + size - 1} }
+    vec_bounds[sep].sep = int1d{ sep }
+    -- c.printf("Separator: %d Lo: %d Hi: %d Size: %d 1\n", sep, bounds.lo, bounds.hi, bounds.hi - bounds.lo + 1)
+    Bprev_size = Bprev_size + size
+  end
 
-  -- var Bcolors = ispace(int1d, num_separators, 1)
-  -- var Bpart = partition(disjoint, B, Bcoloring, Bcolors)
-  -- c.legion_domain_point_coloring_destroy(Bcoloring)
+  var vec_bounds_part = partition(vec_bounds.sep, ispace(int1d, num_separators, 1))
+  var Bpart = partition_vec_by_image_range(B, vec_bounds, vec_bounds_part)
 
-  -- for Bcolor in Bcolors do
-  --   var part = Bpart[Bcolor]
-  --   fill_b(separators, Bentries, part, Bcolor)
-  -- end
+  for color in Bpart.colors do
+    var part = Bpart[color]
+    var sep = separators[color]
+    fill_b(sep, Bentries, part)
+  end
 
-  -- c.printf("Forward Substitution\n")
-  -- for level = levels-1, -1, -1 do
-  --   for sep_idx = [int](math.pow(2, level))-1, -1, -1 do
-  --     var sep = tree[level][sep_idx]
-  --     var pivot = mat_part[{sep, sep}]
-  --     var bp = Bpart[sep]
+  c.printf("Forward Substitution\n")
+  for lvl = levels-1, -1, -1 do
+    var level = tree[lvl]
 
-  --     var sizeA = pivot.bounds.hi - pivot.bounds.lo + {1, 1}
-  --     var sizeB = bp.bounds.hi - bp.bounds.lo + 1
+    for sep_idx in level.ispace do
+      var sep = level[sep_idx].node
+      var pivot = mat_part[{sep, sep}]
+      var bp = Bpart[sep]
 
-  --     -- c.printf("Level: %d TRSV A=(%d, %d) B=(%d)\nSizeA: %dx%d Lo: %d %d Hi: %d %d SizeB: %d Lo: %d 1 Hi: %d 1\n\n",
-  --     --          level, sep, sep, sep,
-  --     --          sizeA.x, sizeA.y, pivot.bounds.lo.x, pivot.bounds.lo.y, pivot.bounds.hi.x, pivot.bounds.hi.y,
-  --     --          sizeB, bp.bounds.lo, bp.bounds.hi)
+      var sizeA = pivot.bounds.hi - pivot.bounds.lo + {1, 1}
+      var sizeB = bp.bounds.hi - bp.bounds.lo + 1
 
-  --     dtrsv(pivot, bp, cblas.CblasLower, cblas.CblasNoTrans)
+      -- c.printf("Level: %d TRSV A=(%d, %d) B=(%d)\nSizeA: %dx%d Lo: %d %d Hi: %d %d SizeB: %d Lo: %d 1 Hi: %d 1\n\n",
+      --          level, sep, sep, sep,
+      --          sizeA.x, sizeA.y, pivot.bounds.lo.x, pivot.bounds.lo.y, pivot.bounds.hi.x, pivot.bounds.hi.y,
+      --          sizeB, bp.bounds.lo, bp.bounds.hi)
 
-  --     var par_idx = sep_idx
-  --     for par_level = level-1, -1, -1 do
-  --       par_idx = par_idx/2
-  --       var par_sep = tree[par_level][par_idx]
+      dtrsv(pivot, bp, cblas.CblasLower, cblas.CblasNoTrans)
 
-  --       var A = mat_part[{par_sep, sep}]
-  --       var sizeA = A.bounds.hi - A.bounds.lo + {1, 1}
-  --       var X = Bpart[sep]
-  --       var sizeX = X.bounds.hi - X.bounds.lo + 1
-  --       var Y = Bpart[par_sep]
-  --       var sizeY = Y.bounds.hi - Y.bounds.lo + 1
+      var par_idx = [int](sep_idx)
+      for par_lvl = lvl-1, -1, -1 do
+        par_idx = [int](par_idx/2)
+        var par_level = tree[par_lvl]
+        var par_sep = par_level[par_idx].node
 
-  --       -- c.printf("\tLevel: %d GEMV A=(%d, %d) X=(%d) Y=(%d)\n\tSizeA: %dx%d Lo: %d %d Hi: %d %d SizeX: %d Lo: %d 1 Hi: %d 1 SizeY: %d Lo: %d 1 Hi: %d 1\n\n",
-  --       --          par_level, sep, par_sep, sep, par_sep,
-  --       --          sizeA.x, sizeA.y, A.bounds.lo.x, A.bounds.lo.y, A.bounds.hi.x, A.bounds.hi.y,
-  --       --          sizeX, X.bounds.lo, X.bounds.hi,
-  --       --          sizeY, Y.bounds.lo, Y.bounds.hi)
+        var A = mat_part[{par_sep, sep}]
+        var sizeA = A.bounds.hi - A.bounds.lo + {1, 1}
+        var X = Bpart[sep]
+        var sizeX = X.bounds.hi - X.bounds.lo + 1
+        var Y = Bpart[par_sep]
+        var sizeY = Y.bounds.hi - Y.bounds.lo + 1
 
-  --       dgemv(A, X, Y, cblas.CblasNoTrans)
-  --     end
-  --   end
-  -- end
+        -- c.printf("\tLevel: %d GEMV A=(%d, %d) X=(%d) Y=(%d)\n\tSizeA: %dx%d Lo: %d %d Hi: %d %d SizeX: %d Lo: %d 1 Hi: %d 1 SizeY: %d Lo: %d 1 Hi: %d 1\n\n",
+        --          par_level, sep, par_sep, sep, par_sep,
+        --          sizeA.x, sizeA.y, A.bounds.lo.x, A.bounds.lo.y, A.bounds.hi.x, A.bounds.hi.y,
+        --          sizeX, X.bounds.lo, X.bounds.hi,
+        --          sizeY, Y.bounds.lo, Y.bounds.hi)
 
-  -- c.printf("Backward Substitution\n")
-  -- for par_level = 0, levels do
-  --   for par_idx = 0, [int](math.pow(2, par_level)) do
-  --     var par_sep = tree[par_level][par_idx]
-  --     var pivot = mat_part[{par_sep, par_sep}]
-  --     var bp = Bpart[par_sep]
+        dgemv(A, X, Y, cblas.CblasNoTrans)
+      end
+    end
+  end
 
-  --     var sizeA = pivot.bounds.hi - pivot.bounds.lo + {1, 1}
-  --     var sizeB = bp.bounds.hi - bp.bounds.lo + {1, 1}
+  c.printf("Backward Substitution\n")
+  for par_lvl = 0, levels do
+    var par_level = tree[par_lvl]
+    for par_idx in par_level.ispace do
+      var par_sep = par_level[par_idx].node
+      var pivot = mat_part[{par_sep, par_sep}]
+      var bp = Bpart[par_sep]
 
-  --     -- c.printf("Level: %d TRSV A=(%d, %d) B=(%d)\nSizeA: %dx%d Lo: %d %d Hi: %d %d SizeB: %d Lo: %d 1 Hi: %d 1\n\n",
-  --     --          par_level, par_sep, par_sep, par_sep,
-  --     --          sizeA.x, sizeA.y, pivot.bounds.lo.x, pivot.bounds.lo.y, pivot.bounds.hi.x, pivot.bounds.hi.y,
-  --     --          sizeB, bp.bounds.lo, bp.bounds.hi)
+      var sizeA = pivot.bounds.hi - pivot.bounds.lo + {1, 1}
+      var sizeB = bp.bounds.hi - bp.bounds.lo + {1, 1}
 
-  --     dtrsv(pivot, bp, cblas.CblasLower, cblas.CblasTrans)
+      -- c.printf("Level: %d TRSV A=(%d, %d) B=(%d)\nSizeA: %dx%d Lo: %d %d Hi: %d %d SizeB: %d Lo: %d 1 Hi: %d 1\n\n",
+      --          par_level, par_sep, par_sep, par_sep,
+      --          sizeA.x, sizeA.y, pivot.bounds.lo.x, pivot.bounds.lo.y, pivot.bounds.hi.x, pivot.bounds.hi.y,
+      --          sizeB, bp.bounds.lo, bp.bounds.hi)
 
-  --     for level = par_level+1, levels do
-  --       for sep_idx = [int](par_idx*math.pow(2, level-par_level)), [int]((par_idx+1)*math.pow(2, level-par_level)) do
-  --         var sep = tree[level][sep_idx]
-  --         var A = mat_part[{par_sep, sep}]
-  --         var sizeA = A.bounds.hi - A.bounds.lo + {1, 1}
-  --         var X = Bpart[par_sep]
-  --         var sizeX = X.bounds.hi - X.bounds.lo + 1
-  --         var Y = Bpart[sep]
-  --         var sizeY = Y.bounds.hi - Y.bounds.lo + 1
+      dtrsv(pivot, bp, cblas.CblasLower, cblas.CblasTrans)
 
-  --         var vol = c.legion_domain_get_volume(c.legion_domain_from_rect_2d(A.bounds))
-  --         if vol ~= 0 then
-  --           -- c.printf("\tLevel: %d GEMV A=(%d, %d) X=(%d) Y=(%d)\n\tSizeA: %dx%d Lo: %d %d Hi: %d %d SizeX: %d Lo: %d 1 Hi: %d 1 SizeY: %d Lo: %d 1 Hi: %d 1\n\n",
-  --           --          level, sep, par_sep, par_sep, sep,
-  --           --          sizeA.x, sizeA.y, A.bounds.lo.x, A.bounds.lo.y, A.bounds.hi.x, A.bounds.hi.y,
-  --           --          sizeX, X.bounds.lo, X.bounds.hi,
-  --           --          sizeY, Y.bounds.lo, Y.bounds.hi)
+      for lvl = par_lvl+1, levels do
+        var level = tree[lvl]
+        for sep_idx = [int](par_idx*math.pow(2, lvl-par_lvl)), [int]((par_idx+1)*math.pow(2, lvl-par_lvl)) do
+          var sep = level[sep_idx].node
+          var A = mat_part[{par_sep, sep}]
+          var sizeA = A.bounds.hi - A.bounds.lo + {1, 1}
+          var X = Bpart[par_sep]
+          var sizeX = X.bounds.hi - X.bounds.lo + 1
+          var Y = Bpart[sep]
+          var sizeY = Y.bounds.hi - Y.bounds.lo + 1
 
-  --           dgemv(A, X, Y, cblas.CblasTrans)
-  --         end
-  --       end
-  --     end
-  --   end
-  -- end
+          var vol = c.legion_domain_get_volume(c.legion_domain_from_rect_2d(A.bounds))
+          if vol ~= 0 then
+            -- c.printf("\tLevel: %d GEMV A=(%d, %d) X=(%d) Y=(%d)\n\tSizeA: %dx%d Lo: %d %d Hi: %d %d SizeX: %d Lo: %d 1 Hi: %d 1 SizeY: %d Lo: %d 1 Hi: %d 1\n\n",
+            --          level, sep, par_sep, par_sep, sep,
+            --          sizeA.x, sizeA.y, A.bounds.lo.x, A.bounds.lo.y, A.bounds.hi.x, A.bounds.hi.y,
+            --          sizeX, X.bounds.lo, X.bounds.hi,
+            --          sizeY, Y.bounds.lo, Y.bounds.hi)
 
-  -- c.printf("Done solve.\n")
+            dgemv(A, X, Y, cblas.CblasTrans)
+          end
+        end
+      end
+    end
+  end
 
-  -- unpermute_solution(separators, X, B)
+  c.printf("Done solve.\n")
 
-  -- if c.strcmp(solution_file, '') ~= 0 then
-  --   write_solution(solution_file, X)
-  -- end
+  var j = 0
+  for sep = 1, num_separators+1 do
+    var separator = separators[sep]
+    for i in separator.ispace do
+      var idxi = separator[i].idx
+      X[idxi] = B[j]
+      j += 1
+    end
+  end
 
-  -- __fence(__execution, __block)
-  -- for i = 0, num_separators+1 do
-  --   c.free(separators[i])
-  -- end
-  -- c.free(separators)
-
-  -- for i = 0, levels do
-  --   c.free(tree[i])
-  -- end
-  -- c.free(tree)
-
-  -- c.free(Bentries)
-
-  -- mnd.delete_entries()
+  if c.strcmp(solution_file, '') ~= 0 then
+    write_solution(solution_file, X)
+  end
 end
 
 regentlib.start(main, ccholesky.register_mappers)

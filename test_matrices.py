@@ -62,8 +62,8 @@ class TestMatrices():
         args = generate_args(args, input_prefix, output_prefix)
 
         run(**args)
-        assert check_matrix(args['mat'], args['separators'], args['factored_mat']) == True
-        # assert check_solution(args['mat'], args['b'], args['solution']) == True
+        assert check_matrix(args['mat'], args['separators'], args['factored_mat']) is True
+        assert check_solution(args['mat'], args['b'], args['solution']) is True
 
     def test_25x25(self):
 
@@ -84,8 +84,8 @@ class TestMatrices():
         args = generate_args(args, input_prefix, output_prefix)
 
         run(**args)
-        assert check_matrix(args['mat'], args['separators'], args['factored_mat']) == True
-        # assert check_solution(args['mat'], args['b'], args['solution']) == True
+        assert check_matrix(args['mat'], args['separators'], args['factored_mat']) is True
+        assert check_solution(args['mat'], args['b'], args['solution']) is True
 
     def test_400x400(self):
 
@@ -106,8 +106,8 @@ class TestMatrices():
         args = generate_args(args, input_prefix, output_prefix)
 
         run(**args)
-        assert check_matrix(args['mat'], args['separators'], args['factored_mat']) == True
-        # assert check_solution(args['mat'], args['b'], args['solution']) == True
+        assert check_matrix(args['mat'], args['separators'], args['factored_mat']) is True
+        assert check_solution(args['mat'], args['b'], args['solution']) is True
 
     def test_3375x3375(self):
 
@@ -128,5 +128,5 @@ class TestMatrices():
         args = generate_args(args, input_prefix, output_prefix)
 
         run(**args)
-        assert check_matrix(args['mat'], args['separators'], args['factored_mat']) == True
-        # assert check_solution(args['mat'], args['b'], args['solution']) == True
+        assert check_matrix(args['mat'], args['separators'], args['factored_mat']) is True
+        assert check_solution(args['mat'], args['b'], args['solution']) is True
