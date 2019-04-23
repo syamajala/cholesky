@@ -17,16 +17,8 @@
 #define MND_H
 
 #include <stdlib.h>
-#include "uthash.h"
 #include "legion/legion_c.h"
 
-typedef struct Entry {
-  uint64_t idx;
-  double val;
-  UT_hash_handle hh;
-} Entry;
-
-Entry *entries = NULL;
 
 typedef struct SepInfo {
   int levels;
@@ -49,8 +41,12 @@ int read_clusters(char *file,
                   legion_physical_region_t pr[],
                   legion_field_id_t fld[]);
 
-void add_entry(uint64_t idx, double val);
-double find_entry(uint64_t idx);
-void delete_entries();
+void read_matrix(char* file,
+                 int nz,
+                 legion_runtime_t runtime,
+                 legion_context_t context,
+                 legion_index_space_t is,
+                 legion_physical_region_t pr[],
+                 legion_field_id_t fld[]);
 
 #endif

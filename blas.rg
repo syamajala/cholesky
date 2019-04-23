@@ -57,8 +57,7 @@ terra dpotrf_terra(rect: rect2d, m:int,
                    fld : c.legion_field_id_t)
   var rawA = get_raw_ptr_2d(rect, pr, fld)
   var uplo : rawstring = 'L'
-  var info = lapack.LAPACKE_dpotrf(cblas.CblasColMajor, @uplo, m, rawA.ptr, rawA.offset)
-  return info
+  lapack.LAPACKE_dpotrf(cblas.CblasColMajor, @uplo, m, rawA.ptr, rawA.offset)
 end
 
 __demand(__leaf)
@@ -67,7 +66,7 @@ where reads writes(rA)
 do
   var rect = rA.bounds
   var size:int2d = rect.hi - rect.lo + {1, 1}
-  return dpotrf_terra(rect, size.x, __physical(rA)[0], __fields(rA)[0])
+  dpotrf_terra(rect, size.x, __physical(rA)[0], __fields(rA)[0])
 end
 
 terra dtrsm_terra(rectA:rect2d, rectB:rect2d, m:int, n:int,
@@ -79,8 +78,8 @@ terra dtrsm_terra(rectA:rect2d, rectB:rect2d, m:int, n:int,
   var rawB = get_raw_ptr_2d(rectB, prB, fldB)
   var alpha = 1.0
 
-  cblas.cblas_dtrsm(cblas.CblasColMajor, cblas.CblasRight, cblas.CblasLower, cblas.CblasTrans, cblas.CblasNonUnit, m, n, alpha,
-                    rawA.ptr, rawA.offset, rawB.ptr, rawB.offset)
+  cblas.cblas_dtrsm(cblas.CblasColMajor, cblas.CblasRight, cblas.CblasLower, cblas.CblasTrans, cblas.CblasNonUnit,
+                    m, n, alpha, rawA.ptr, rawA.offset, rawB.ptr, rawB.offset)
 end
 
 __demand(__leaf)
@@ -114,9 +113,9 @@ terra dgemm_terra(rectA:rect2d, rectB:rect2d, rectC:rect2d,
   var rawC = get_raw_ptr_2d(rectC, prC, fldC)
 
   cblas.cblas_dgemm(cblas.CblasColMajor, cblas.CblasNoTrans, cblas.CblasTrans, m, n, k,
-                   alpha, rawA.ptr, rawA.offset,
-                   rawB.ptr, rawB.offset,
-                   beta, rawC.ptr, rawC.offset)
+                    alpha, rawA.ptr, rawA.offset,
+                    rawB.ptr, rawB.offset,
+                    beta, rawC.ptr, rawC.offset)
 end
 
 __demand(__leaf)

@@ -16,15 +16,15 @@ import "regent"
 local c = regentlib.c
 terralib.includepath = terralib.includepath .. ";."
 
-terralib.linklibrary("libmmio.so")
+terralib.linklibrary("./libmmio.so")
 local mmio = terralib.includec("mmio.h")
 local mnd = terralib.includec("mnd.h")
 local math = terralib.includec("math.h")
 
-terralib.linklibrary("libcholesky.so")
+terralib.linklibrary("./libcholesky.so")
 local runtime_dir = os.getenv('LG_RT_DIR') .. "/"
 local ccholesky = terralib.includec("cholesky.h", {"-I", runtime_dir})
--- print(c.fopen)
+-- print(c.legion_domain_from_index_space)
 
 local blas = require("blas")
 terralib.linklibrary("libcblas.so")
@@ -37,10 +37,9 @@ struct MMatBanner {
   typecode:mmio.MM_typecode
 }
 
-struct MatrixEntry {
-  I:int
-  J:int
-  Val:double
+fspace MatrixEntry {
+  idx:int2d,
+  val:double
 }
 
 fspace SepIndex {
@@ -79,11 +78,12 @@ fspace ClusterBounds {
   cluster:int3d
 }
 
-terra read_matrix_banner(file : &c.FILE)
+terra read_matrix_banner(file : regentlib.string)
   var banner:MMatBanner
   var ret:int
 
-  ret = mmio.mm_read_banner(file, &(banner.typecode))
+  var fp = c.fopen(file, 'r')
+  ret = mmio.mm_read_banner(fp, &(banner.typecode))
 
   if ret ~= 0 then
     c.printf("Unable to read banner.\n")
@@ -93,43 +93,15 @@ terra read_matrix_banner(file : &c.FILE)
   var M : int[1]
   var N : int[1]
   var nz : int[1]
-  ret = mmio.mm_read_mtx_crd_size(file, &(banner.M), &(banner.N), &(banner.NZ))
+  ret = mmio.mm_read_mtx_crd_size(fp, &(banner.M), &(banner.N), &(banner.NZ))
 
   if ret ~= 0 then
     c.printf("Unable to read matrix size.\n")
     return MMatBanner{0, 0, 0}
   end
 
+  c.fclose(fp);
   return banner
-end
-
-terra read_matrix(file : &c.FILE, nz : int, cols : uint64)
-  for i = 0, nz do
-    var entry:MatrixEntry
-    c.fscanf(file, "%d %d %lg\n", &(entry.I), &(entry.J), &(entry.Val))
-    entry.I = entry.I - 1
-    entry.J = entry.J - 1
-    var eidx:uint64 = entry.I*cols+entry.J
-    mnd.add_entry(eidx, entry.Val)
-  end
-end
-
-terra read_b(file : rawstring, n : int)
-  var entries = [&double](c.malloc(n*sizeof(double)))
-
-  var entries_file = c.fopen(file, 'r')
-
-  for i = 0, n+3 do
-    if i < 3 then
-      var buff:int8[1024]
-      c.fgets(buff, 1024, entries_file)
-    else
-      c.fscanf(entries_file, "%lg\n", &(entries[i-3]))
-    end
-  end
-
-  c.fclose(entries_file)
-  return entries
 end
 
 __demand(__leaf)
@@ -468,8 +440,17 @@ do
   end
 end
 
+__demand(__inline)
+task contains(point  : int2d,
+              domain : c.legion_domain_t)
+  var dp = c.legion_domain_point_from_point_2d(point)
+  return c.legion_domain_contains(domain, dp)
+end
+
 __demand(__leaf)
 task fill_block(color           : int2d,
+                entries_domain  : c.legion_domain_t,
+                sparse_entries  : region(ispace(int2d), double),
                 block           : region(ispace(int2d), double),
                 row_dofs        : region(ispace(int1d), SepIndex),
                 col_dofs        : region(ispace(int1d), SepIndex),
@@ -477,11 +458,10 @@ task fill_block(color           : int2d,
                 clusters_sep    : partition(disjoint, clusters_region, ispace(int1d)),
                 clusters_int    : partition(disjoint, clusters_region, ispace(int1d)),
                 clusters        : cross_product(clusters_sep, clusters_int),
-                cols            : uint64,
                 filled_blocks   : region(ispace(int3d), Filled),
                 debug           : bool)
 where
-  reads(row_dofs, col_dofs, clusters_region), reads writes(block, filled_blocks)
+  reads(sparse_entries, row_dofs, col_dofs, clusters_region), reads writes(block, filled_blocks)
 do
   var row_sep = color.x
   var row_cluster = clusters[row_sep][0]
@@ -525,21 +505,20 @@ do
             idxj = t
           end
 
-          var eidx:uint64 = idxi*cols+idxj
-          var entry = mnd.find_entry(eidx)
+          var eidx = int2d{idxi, idxj}
           var idx = block_idx + cidx
           if row_sep == col_sep and idx.y <= idx.x then
             -- c.printf("Block: %d %d %d Filling Diagonal: %d %d I: %d J: %d key: %lu Entry: %0.2f\n",
             --          row_sep, col_sep, z, idx.x, idx.y, idxi, idxj, eidx, entry)
-            if entry ~= 0 then
-              block[idx] = entry
+            if contains(eidx, entries_domain) then
+              block[idx] = sparse_entries[eidx]
               nnz += 1
             end
           elseif row_sep ~= col_sep then
             -- c.printf("Block: %d %d %d Filling Off-Diagonal: %d %d I: %d J: %d key: %lu Entry: %0.2f\n",
             --          row_sep, col_sep, z, idx.x, idx.y, idxi, idxj, eidx, entry)
-            if entry ~= 0 then
-              block[idx] = entry
+            if contains(eidx, entries_domain) then
+              block[idx] = sparse_entries[eidx]
               nnz += 1
             end
           end
@@ -805,6 +784,7 @@ do
     var color = int3d{a.sep.x, a.sep.y, a.cluster}
     var rectA = a.bounds
     var size:int2d = rectA.hi - rectA.lo + {1, 1}
+    -- c.printf("POTRF A=(%d %d %d) Size: %d %d\n", color.x, color.y, color.z, size.x, size.y)
     dpotrf_terra(rectA, size.x, __physical(rA)[0], __fields(rA)[0])
   end
 end
@@ -821,11 +801,15 @@ do
     var a = filled_rA[i]
     var Acolor = int3d{a.sep.x, a.sep.y, a.cluster}
     var rectA = a.bounds
+    var sizeA = rectA.hi - rectA.lo + {1, 1}
     for j in filled_rB.ispace do
       var b = filled_rB[j]
       var Bcolor = int3d{b.sep.x, b.sep.y, b.cluster}
       var rectB = b.bounds
       var size:int2d = rectB.hi - rectB.lo + {1, 1}
+      -- c.printf("TRSM A=(%d %d %d) Size: %d %d B=(%d %d %d) Size: %d %d\n",
+      --          Acolor.x, Acolor.y, Acolor.z, sizeA.x, sizeA.y,
+      --          Bcolor.x, Bcolor.y, Bcolor.z, size.x, size.y)
       dtrsm_terra(rectA, rectB, size.x, size.y,
                   __physical(rA)[0], __fields(rA)[0],
                   __physical(rB)[0], __fields(rB)[0])
@@ -1110,6 +1094,31 @@ do
   end
 end
 
+task read_matrix(matrix_file    : regentlib.string,
+                 NZ             : int,
+                 entries_region : region(ispace(int2d), MatrixEntry))
+where
+  reads writes(entries_region)
+do
+  mnd.read_matrix(matrix_file, NZ,
+                  __runtime(), __context(),
+                  __raw(entries_region.ispace), __physical(entries_region), __fields(entries_region))
+end
+
+__demand(__leaf)
+task copy_sparse_entries(entries        : region(ispace(int2d), MatrixEntry),
+                         sparse_entries : region(ispace(int2d), double))
+where
+  reads(entries.val),
+  writes(sparse_entries)
+do
+  var idx = int2d{0, 0}
+  for i in sparse_entries.ispace do
+    sparse_entries[i] = entries[idx].val
+    idx += int2d{1 ,0}
+  end
+end
+
 task read_separators(separator_file    : regentlib.string,
                      M                 : int,
                      separators_region : region(ispace(int1d), SepIndex))
@@ -1229,6 +1238,7 @@ do
   end
 end
 
+__demand(__inline)
 task factor(lvl                    : int,
             tree_region            : region(ispace(int1d), TreeNode),
             tree                   : partition(disjoint, tree_region, ispace(int1d)),
@@ -1365,9 +1375,11 @@ end
 
 -- __demand(__inner)
 task main()
+  cblas.openblas_set_num_threads(1)
+
   var args = c.legion_runtime_get_input_args()
 
-  var matrix_file_path = ""
+  var matrix_file = ""
   var separator_file = ""
   var clusters_file = ""
   var b_file = ""
@@ -1379,7 +1391,7 @@ task main()
 
   for i = 0, args.argc do
     if c.strcmp(args.argv[i], "-i") == 0 then
-      matrix_file_path = args.argv[i+1]
+      matrix_file = args.argv[i+1]
     elseif c.strcmp(args.argv[i], "-s") == 0 then
       separator_file = args.argv[i+1]
     elseif c.strcmp(args.argv[i], "-c") == 0 then
@@ -1397,8 +1409,6 @@ task main()
       debug = true
     end
   end
-
-  var matrix_file = c.fopen(matrix_file_path, 'r')
 
   var banner = read_matrix_banner(matrix_file)
   c.printf("M: %d N: %d nz: %d typecode: %s\n", banner.M, banner.N, banner.NZ, banner.typecode)
@@ -1429,9 +1439,18 @@ task main()
   var mat = region(ispace(int2d, {x = banner.M, y = banner.N}), double)
   fill(mat, 0)
 
-  var cols:uint64 = [uint64](banner.N)
-  read_matrix(matrix_file, banner.NZ, cols)
-  c.fclose(matrix_file)
+  var nonzero_entries = region(ispace(int2d, {banner.NZ, 1}), MatrixEntry)
+  fill(nonzero_entries.idx, int2d{-1, -1})
+  fill(nonzero_entries.val, 0)
+  read_matrix(matrix_file, banner.NZ, nonzero_entries)
+  var nz_part = partition(equal, nonzero_entries, ispace(int2d, {1, 1}))
+  var sparse_part = image(mat, nz_part, nonzero_entries.idx)
+
+  var sparse_entry_ispace = sparse_part[{0, 0}].ispace
+  var sparse_entries = region(sparse_entry_ispace, double)
+  fill(sparse_entries, 0)
+  copy_sparse_entries(nonzero_entries, sparse_entries)
+  var entries_domain = c.legion_domain_from_index_space(__runtime(), __raw(sparse_entry_ispace))
 
   var blocks = region(ispace(int2d, {num_separators, num_separators}, {1, 1}), int1d)
   fill(blocks, 0)
@@ -1487,10 +1506,18 @@ task main()
     fill(block, 0)
     var row_dofs = separators[color.x]
     var col_dofs = separators[color.y]
-
-    nz += fill_block(color, block, row_dofs, col_dofs, clusters_region, clusters_sep, clusters_int, clusters, cols, fpblock, debug)
+    fill_block(color, entries_domain, sparse_entries, block, row_dofs, col_dofs, clusters_region, clusters_sep, clusters_int, clusters, fpblock, debug)
+    -- nz += fill_block(color, sparse_entries, block, row_dofs, col_dofs, clusters_region, clusters_sep, clusters_int, clusters, fpblock, debug)
     -- regentlib.assert(nz <= banner.NZ, "Mismatch in number of entries.")
   end
+
+  -- c.printf("Filled: %d Expected: %d\n", nz, banner.NZ)
+
+  if c.strcmp(permuted_matrix_file, '') ~= 0 then
+    write_matrix(mat, mat_part, permuted_matrix_file, banner)
+  end
+
+  -- regentlib.assert(nz == banner.NZ, "Mismatch in number of entries.")
 
   var filled_clusters_region2 = region(ispace(ptr, allocated_clusters_ispace.volume*levels), Filled)
   fill(filled_clusters_region2.nz, -1)
@@ -1510,14 +1537,6 @@ task main()
   var filled_clusters_sep = partition(filled_clusters_filled.sep, allocated_blocks_ispace)
   var filled_clusters_intervals = partition(filled_clusters_filled.interval, ispace(int1d, levels))
   var filled_clusters = cross_product(filled_clusters_sep, filled_clusters_intervals)
-
-  c.printf("Filled: %d Expected: %d\n", nz, banner.NZ)
-
-  if c.strcmp(permuted_matrix_file, '') ~= 0 then
-    write_matrix(mat, mat_part, permuted_matrix_file, banner)
-  end
-
-  regentlib.assert(nz == banner.NZ, "Mismatch in number of entries.")
 
   for lvl = levels-1, -1, -1 do
 
@@ -1651,13 +1670,6 @@ task main()
 
   if c.strcmp(factor_file, '') ~= 0 then
     write_matrix(mat, mat_part, factor_file, banner)
-  end
-
-  if c.strcmp(b_file, '') == 0 then
-    __fence(__execution, __block)
-
-    mnd.delete_entries()
-    return
   end
 
   -- var Bentries = read_b(b_file, banner.N)

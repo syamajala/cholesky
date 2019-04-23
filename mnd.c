@@ -144,30 +144,36 @@ int read_clusters(char *file,
   return max_int_size;
 }
 
-void add_entry(uint64_t idx, double val)
+void read_matrix(char* file,
+                 int nz,
+                 legion_runtime_t runtime,
+                 legion_context_t context,
+                 legion_index_space_t is,
+                 legion_physical_region_t pr[],
+                 legion_field_id_t fld[])
 {
-  Entry *e = malloc(sizeof(Entry));
-  e->idx = idx;
-  e->val = val;
+  FILE *fp = fopen(file, "r");
+  char buff[1024];
+  fgets(buff, 1024, fp);
+  fgets(buff, 1024, fp);
 
-  HASH_ADD(hh, entries, idx, sizeof(uint64_t), e);
-}
+  legion_accessor_array_2d_t idx_accessor = legion_physical_region_get_field_accessor_array_2d(pr[0], fld[0]);
+  legion_accessor_array_2d_t val_accessor = legion_physical_region_get_field_accessor_array_2d(pr[1], fld[1]);
+  legion_domain_t domain = legion_domain_from_index_space(runtime, is);
+  legion_domain_point_iterator_t it = legion_domain_point_iterator_create(domain);
 
-double find_entry(uint64_t idx)
-{
-  Entry *e;
-  HASH_FIND(hh, entries, &idx, sizeof(uint64_t), e);
-  if(e)
-    return e->val;
-
-  return 0;
-}
-
-void delete_entries() {
-  Entry *ce, *tmp;
-  HASH_ITER(hh, entries, ce, tmp) {
-    HASH_DEL(entries, ce);
-    free(ce);
+  for(int n = 0; n < nz; n++)
+  {
+    int i = 0;
+    int j = 0;
+    double val = 0.0;
+    fscanf(fp, "%d %d %lg\n", &i, &j, &val);
+    legion_domain_point_t domain_point = legion_domain_point_iterator_next(it);
+    legion_point_2d_t point = legion_domain_point_get_point_2d(domain_point);
+    legion_point_2d_t idx = {i-1, j-1};
+    legion_accessor_array_2d_write_point(idx_accessor, point, &idx, sizeof(legion_point_2d_t));
+    legion_accessor_array_2d_write_point(val_accessor, point, &val, sizeof(double));
   }
-}
 
+  fclose(fp);
+}

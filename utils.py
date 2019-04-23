@@ -36,7 +36,7 @@ def tree(levels):
 
 
 def print_tree_size(t):
-    for lvl, nodes in enumerate(t):
+    for lvl, nodes in t.items():
         print("Level:", lvl, "Nodes:", len(nodes))
 
 
@@ -44,12 +44,15 @@ dim = 125000
 depths = list(range(1, depth(dim)+1))
 leaf_sizes = list(map(lambda x: leaf_size(dim, x), depths))
 num_subregions = list(map(lambda x: subregions(x), depths))
+num_leaves = list(map(lambda x: 2**(x-1), depths))
+
 print("Depths:", depths)
 print("Leaf sizes:", leaf_sizes)
 print("Subregions:", num_subregions)
 
 traces = [go.Scatter(x=depths, y=leaf_sizes, mode='lines+markers', name='Depth vs Block Size'),
-          go.Scatter(x=depths, y=num_subregions, mode='lines+markers', name="Depth vs Num Subregions", yaxis='y2')]
+          go.Scatter(x=depths, y=num_subregions, mode='lines+markers', name="Depth vs Num Subregions", yaxis='y2'),
+          go.Scatter(x=depths, y=num_leaves, mode='lines+markers', name="Depth vs Num Leaf Subregions", yaxis='y2')]
 layout = go.Layout(title='50^3 Laplacian Depth vs Block Size',
                    xaxis={'title': "Depth"},
                    yaxis={'title': "Block Size"},
