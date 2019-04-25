@@ -41,6 +41,7 @@ int read_clusters(char *file,
                   legion_field_id_t fld[]);
 
 void read_matrix(char* file,
+                 uint64_t cols,
                  int nz,
                  legion_runtime_t runtime,
                  legion_context_t context,

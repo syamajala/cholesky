@@ -145,6 +145,7 @@ int read_clusters(char *file,
 }
 
 void read_matrix(char* file,
+                 uint64_t cols,
                  int nz,
                  legion_runtime_t runtime,
                  legion_context_t context,
@@ -157,22 +158,48 @@ void read_matrix(char* file,
   fgets(buff, 1024, fp);
   fgets(buff, 1024, fp);
 
-  legion_accessor_array_2d_t idx_accessor = legion_physical_region_get_field_accessor_array_2d(pr[0], fld[0]);
-  legion_accessor_array_2d_t val_accessor = legion_physical_region_get_field_accessor_array_2d(pr[1], fld[1]);
-  legion_domain_t domain = legion_domain_from_index_space(runtime, is);
-  legion_domain_point_iterator_t it = legion_domain_point_iterator_create(domain);
+  legion_accessor_array_1d_t idx_accessor = legion_physical_region_get_field_accessor_array_1d(pr[0], fld[0]);
+  legion_accessor_array_1d_t val_accessor = legion_physical_region_get_field_accessor_array_1d(pr[1], fld[1]);
+  legion_accessor_array_1d_t col_accessor = legion_physical_region_get_field_accessor_array_1d(pr[2], fld[2]);
 
   for(int n = 0; n < nz; n++)
   {
-    int i = 0;
-    int j = 0;
+    uint64_t i = 0;
+    uint64_t j = 0;
     double val = 0.0;
-    fscanf(fp, "%d %d %lg\n", &i, &j, &val);
-    legion_domain_point_t domain_point = legion_domain_point_iterator_next(it);
-    legion_point_2d_t point = legion_domain_point_get_point_2d(domain_point);
-    legion_point_2d_t idx = {i-1, j-1};
-    legion_accessor_array_2d_write_point(idx_accessor, point, &idx, sizeof(legion_point_2d_t));
-    legion_accessor_array_2d_write_point(val_accessor, point, &val, sizeof(double));
+    fscanf(fp, "%lu %lu %lg\n", &i, &j, &val);
+    i -= 1;
+    j -= 1;
+    uint64_t iidx = i*cols+j;
+    legion_point_1d_t p = { iidx % nz };
+    legion_point_2d_t idx = {i, j};
+
+    double pval = 0.0;
+    legion_accessor_array_1d_read_point(val_accessor, p, (void *)&pval, sizeof(double));
+    legion_point_1d_t p2 = p;
+    int collision = 0;
+    while (pval != 0)
+    {
+      collision = 1;
+      p2.x[0] = (p2.x[0] + 1) % nz;
+      legion_accessor_array_1d_read_point(val_accessor, p2, (void *)&pval, sizeof(double));
+    }
+
+    if (collision)
+    {
+      legion_point_1d_t col = {-1};
+      legion_accessor_array_1d_read_point(col_accessor, p, &col, sizeof(legion_point_1d_t));
+      while (*col.x != -1)
+      {
+        p = col;
+        legion_accessor_array_1d_read_point(col_accessor, p, &col, sizeof(legion_point_1d_t));
+      }
+      legion_accessor_array_1d_write_point(col_accessor, p, &p2, sizeof(legion_point_1d_t));
+      p = p2;
+    }
+
+    legion_accessor_array_1d_write_point(idx_accessor, p, &idx, sizeof(legion_point_2d_t));
+    legion_accessor_array_1d_write_point(val_accessor, p, &val, sizeof(double));
   }
 
   fclose(fp);

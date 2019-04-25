@@ -39,7 +39,8 @@ struct MMatBanner {
 
 fspace MatrixEntry {
   idx : int2d,
-  val : double
+  val : double,
+  col : int1d
 }
 
 fspace SepIndex {
@@ -469,16 +470,35 @@ do
 end
 
 __demand(__inline)
-task contains(point  : int2d,
-              domain : c.legion_domain_t)
-  var dp = c.legion_domain_point_from_point_2d(point)
-  return c.legion_domain_contains(domain, dp)
+task search(entry : int2d, cols : int, nonzero_entries : region(ispace(int1d), MatrixEntry))
+where
+  reads(nonzero_entries)
+do
+  var c = [uint64](cols)
+  var idx:uint64 = entry.x*cols+entry.y
+  var k = idx % nonzero_entries.volume
+  var p = nonzero_entries[k]
+  var val = 0.0
+
+  if p.idx ~= entry then
+    while p.col ~= int1d{-1} do
+      p = nonzero_entries[p.col]
+      if p.idx == entry then
+        val = p.val
+        break
+      end
+    end
+  else
+    val = p.val
+  end
+
+  return val
 end
 
 __demand(__leaf)
 task fill_block(color           : int2d,
-                entries_domain  : c.legion_domain_t,
-                sparse_entries  : region(ispace(int2d), double),
+                cols            : int,
+                nonzero_entries : region(ispace(int1d), MatrixEntry),
                 block           : region(ispace(int2d), double),
                 row_dofs        : region(ispace(int1d), SepIndex),
                 col_dofs        : region(ispace(int1d), SepIndex),
@@ -489,7 +509,7 @@ task fill_block(color           : int2d,
                 filled_blocks   : region(ispace(int3d), Filled),
                 debug           : bool)
 where
-  reads(sparse_entries, row_dofs, col_dofs, clusters_region), reads writes(block, filled_blocks)
+  reads(nonzero_entries, row_dofs, col_dofs, clusters_region), writes(block, filled_blocks)
 do
   var row_sep = color.x
   var row_cluster = clusters[row_sep][0]
@@ -517,7 +537,6 @@ do
       var row_bound = bottom - top
 
       var z = row*col_cluster_size+col
-
       var nnz = 0
       -- c.printf("Bounds: %d %d %d row: %d %d col: %d %d\n", row_sep, col_sep, z, top, bottom, left, right)
 
@@ -535,18 +554,20 @@ do
 
           var eidx = int2d{idxi, idxj}
           var idx = block_idx + cidx
+          var val = search(eidx, cols, nonzero_entries)
+
           if row_sep == col_sep and idx.y <= idx.x then
-            -- c.printf("Block: %d %d %d Filling Diagonal: %d %d I: %d J: %d key: %lu Entry: %0.2f\n",
-            --          row_sep, col_sep, z, idx.x, idx.y, idxi, idxj, eidx, entry)
-            if contains(eidx, entries_domain) then
-              block[idx] = sparse_entries[eidx]
+            if val ~= 0.0 then
+              -- c.printf("Block: %d %d %d Filling Diagonal: %d %d I: %d J: %d EI: %d EJ: %d Entry: %0.3f\n",
+              --          row_sep, col_sep, z, idx.x, idx.y, idxi, idxj, eidx.x, eidx.y, val)
+              block[idx] = val
               nnz += 1
             end
           elseif row_sep ~= col_sep then
-            -- c.printf("Block: %d %d %d Filling Off-Diagonal: %d %d I: %d J: %d key: %lu Entry: %0.2f\n",
-            --          row_sep, col_sep, z, idx.x, idx.y, idxi, idxj, eidx, entry)
-            if contains(eidx, entries_domain) then
-              block[idx] = sparse_entries[eidx]
+            if val ~= 0.0 then
+              -- c.printf("Block: %d %d %d Filling Off-Diagonal: %d %d I: %d J: %d EI: %d EJ: %d Entry: 0.3f\n",
+              --          row_sep, col_sep, z, idx.x, idx.y, idxi, idxj, eidx.x, eidx.y, val)
+              block[idx] = val
               nnz += 1
             end
           end
@@ -1107,28 +1128,15 @@ do
 end
 
 task read_matrix(matrix_file    : regentlib.string,
-                 NZ             : int,
-                 entries_region : region(ispace(int2d), MatrixEntry))
+                 banner         : MMatBanner,
+                 entries_region : region(ispace(int1d), MatrixEntry))
 where
   writes(entries_region)
 do
-  mnd.read_matrix(matrix_file, NZ,
+  var cols:uint64 = [uint64](banner.N)
+  mnd.read_matrix(matrix_file, cols, banner.NZ,
                   __runtime(), __context(),
                   __raw(entries_region.ispace), __physical(entries_region), __fields(entries_region))
-end
-
-__demand(__leaf)
-task copy_sparse_entries(entries        : region(ispace(int2d), MatrixEntry),
-                         sparse_entries : region(ispace(int2d), double))
-where
-  reads(entries.val),
-  writes(sparse_entries)
-do
-  var idx = int2d{0, 0}
-  for i in sparse_entries.ispace do
-    sparse_entries[i] = entries[idx].val
-    idx += int2d{1 ,0}
-  end
 end
 
 task read_separators(separator_file    : regentlib.string,
@@ -1462,18 +1470,11 @@ task main()
   var mat = region(ispace(int2d, {x = banner.M, y = banner.N}), double)
   fill(mat, 0)
 
-  var nonzero_entries = region(ispace(int2d, {banner.NZ, 1}), MatrixEntry)
+  var nonzero_entries = region(ispace(int1d, banner.NZ), MatrixEntry)
   fill(nonzero_entries.idx, int2d{-1, -1})
   fill(nonzero_entries.val, 0)
-  read_matrix(matrix_file, banner.NZ, nonzero_entries)
-  var nz_part = partition(equal, nonzero_entries, ispace(int2d, {1, 1}))
-  var sparse_part = image(mat, nz_part, nonzero_entries.idx)
-
-  var sparse_entry_ispace = sparse_part[{0, 0}].ispace
-  var sparse_entries = region(sparse_entry_ispace, double)
-  fill(sparse_entries, 0)
-  copy_sparse_entries(nonzero_entries, sparse_entries)
-  var entries_domain = c.legion_domain_from_index_space(__runtime(), __raw(sparse_entry_ispace))
+  fill(nonzero_entries.col, int1d{-1})
+  read_matrix(matrix_file, banner, nonzero_entries)
 
   var blocks = region(ispace(int2d, {num_separators, num_separators}, {1, 1}), int1d)
   fill(blocks, 0)
@@ -1529,8 +1530,8 @@ task main()
     fill(block, 0)
     var row_dofs = separators[color.x]
     var col_dofs = separators[color.y]
-    fill_block(color, entries_domain, sparse_entries, block, row_dofs, col_dofs, clusters_region, clusters_sep, clusters_int, clusters, fpblock, debug)
-    -- nz += fill_block(color, sparse_entries, block, row_dofs, col_dofs, clusters_region, clusters_sep, clusters_int, clusters, fpblock, debug)
+    fill_block(color, banner.N, nonzero_entries, block, row_dofs, col_dofs, clusters_region, clusters_sep, clusters_int, clusters, fpblock, debug)
+    -- nz += fill_block(color, banner.N, nonzero_entries, block, row_dofs, col_dofs, clusters_region, clusters_sep, clusters_int, clusters, fpblock, debug)
     -- regentlib.assert(nz <= banner.NZ, "Mismatch in number of entries.")
   end
 
@@ -1693,6 +1694,10 @@ task main()
 
   if c.strcmp(factor_file, '') ~= 0 then
     write_matrix(mat, mat_part, factor_file, banner)
+  end
+
+  if c.strcmp(b_file, '') == 0 then
+    return
   end
 
   var Bentries = region(ispace(int1d, banner.N), double)

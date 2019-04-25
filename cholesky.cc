@@ -37,6 +37,13 @@ public:
                                    const Partition& partition,
                                    const SelectPartitionProjectionInput& input,
                                    SelectPartitionProjectionOutput& output);
+
+  LogicalRegion default_policy_select_instance_region(MapperContext ctx,
+                                                      Memory target_memory,
+                                                      const RegionRequirement &req,
+                                                      const LayoutConstraintSet &layout_constraints,
+                                                      bool force_new_instances,
+                                                      bool meets_constraints);
 };
 
 CholeskyMapper::CholeskyMapper(MapperRuntime *rt, Machine machine, Processor local,
@@ -54,6 +61,17 @@ void CholeskyMapper::select_partition_projection(const MapperContext ctx,
                     get_mapper_name());
   output.chosen_partition = LogicalPartition::NO_PART;
 }
+
+LogicalRegion CholeskyMapper::default_policy_select_instance_region(MapperContext ctx,
+                                                                    Memory target_memory,
+                                                                    const RegionRequirement &req,
+                                                                    const LayoutConstraintSet &layout_constraints,
+                                                                    bool force_new_instances,
+                                                                    bool meets_constraints)
+{
+  return req.region;
+}
+
 
 static void create_mappers(Machine machine, HighLevelRuntime *runtime, const std::set<Processor> &local_procs)
 {
