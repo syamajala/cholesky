@@ -160,7 +160,7 @@ void read_matrix(char* file,
 
   legion_accessor_array_1d_t idx_accessor = legion_physical_region_get_field_accessor_array_1d(pr[0], fld[0]);
   legion_accessor_array_1d_t val_accessor = legion_physical_region_get_field_accessor_array_1d(pr[1], fld[1]);
-  legion_accessor_array_1d_t col_accessor = legion_physical_region_get_field_accessor_array_1d(pr[2], fld[2]);
+  uint64_t factor = (uint64_t)(ceil(nz/0.75));
 
   for(int n = 0; n < nz; n++)
   {
@@ -171,32 +171,20 @@ void read_matrix(char* file,
     i -= 1;
     j -= 1;
     uint64_t iidx = i*cols+j;
-    legion_point_1d_t p = { iidx % nz };
+    uint64_t hash = hash_sax(iidx);
+    legion_point_1d_t p = { hash % factor };
     legion_point_2d_t idx = {i, j};
 
     double pval = 0.0;
     legion_accessor_array_1d_read_point(val_accessor, p, (void *)&pval, sizeof(double));
-    legion_point_1d_t p2 = p;
-    int collision = 0;
+
     while (pval != 0)
     {
-      collision = 1;
-      p2.x[0] = (p2.x[0] + 1) % nz;
-      legion_accessor_array_1d_read_point(val_accessor, p2, (void *)&pval, sizeof(double));
+      p.x[0] = (p.x[0] + 1) % factor;
+      legion_accessor_array_1d_read_point(val_accessor, p, (void *)&pval, sizeof(double));
     }
 
-    if (collision)
-    {
-      legion_point_1d_t col = {-1};
-      legion_accessor_array_1d_read_point(col_accessor, p, &col, sizeof(legion_point_1d_t));
-      while (*col.x != -1)
-      {
-        p = col;
-        legion_accessor_array_1d_read_point(col_accessor, p, &col, sizeof(legion_point_1d_t));
-      }
-      legion_accessor_array_1d_write_point(col_accessor, p, &p2, sizeof(legion_point_1d_t));
-      p = p2;
-    }
+    //printf("{'P':%lu, 'I':%lu, 'J':%lu, 'Val':%0.f}\n", *p.x, i, j, val);
 
     legion_accessor_array_1d_write_point(idx_accessor, p, &idx, sizeof(legion_point_2d_t));
     legion_accessor_array_1d_write_point(val_accessor, p, &val, sizeof(double));
@@ -233,4 +221,46 @@ void read_vector(char* file,
   }
 
   fclose(fp);
+}
+
+uint64_t hash_jen(uint64_t key)
+{
+  uint64_t hashv;
+  HASH_JEN(&key, sizeof(uint64_t), hashv);
+  return hashv;
+}
+
+uint64_t hash_fnv(uint64_t key)
+{
+  uint64_t hashv;
+  HASH_FNV(&key, sizeof(uint64_t), hashv);
+  return hashv;
+}
+
+uint64_t hash_ber(uint64_t key)
+{
+  uint64_t hashv;
+  HASH_BER(&key, sizeof(uint64_t), hashv);
+  return hashv;
+}
+
+uint64_t hash_sax(uint64_t key)
+{
+  uint64_t hashv;
+  HASH_SAX(&key, sizeof(uint64_t), hashv);
+  return hashv;
+}
+
+uint64_t hash_sfh(uint64_t key)
+{
+  uint64_t hashv;
+  HASH_SFH(&key, sizeof(uint64_t), hashv);
+  return hashv;
+}
+
+uint64_t hash_oat(uint64_t key)
+{
+  uint64_t hashv;
+  HASH_OAT(&key, sizeof(uint64_t), hashv);
+  return hashv;
 }

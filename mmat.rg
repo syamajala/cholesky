@@ -40,7 +40,6 @@ struct MMatBanner {
 fspace MatrixEntry {
   idx : int2d,
   val : double,
-  col : int1d
 }
 
 fspace SepIndex {
@@ -470,19 +469,21 @@ do
 end
 
 __demand(__inline)
-task search(entry : int2d, cols : int, nonzero_entries : region(ispace(int1d), MatrixEntry))
+task search(entry:int2d, cols:int, load_factor:int, nonzero_entries:region(ispace(int1d), MatrixEntry))
 where
   reads(nonzero_entries)
 do
-  var c = [uint64](cols)
-  var idx:uint64 = entry.x*cols+entry.y
-  var k = idx % nonzero_entries.volume
+  var col = [uint64](cols)
+  var idx:uint64 = entry.x*col+entry.y
+  var hash = mnd.hash_sax(idx)
+  var k = hash % load_factor
   var p = nonzero_entries[k]
   var val = 0.0
 
   if p.idx ~= entry then
-    while p.col ~= int1d{-1} do
-      p = nonzero_entries[p.col]
+    while p.val ~= 0 do
+      k = (k + 1) % load_factor
+      p = nonzero_entries[k]
       if p.idx == entry then
         val = p.val
         break
@@ -498,6 +499,7 @@ end
 __demand(__leaf)
 task fill_block(color           : int2d,
                 cols            : int,
+                load_factor     : int,
                 nonzero_entries : region(ispace(int1d), MatrixEntry),
                 block           : region(ispace(int2d), double),
                 row_dofs        : region(ispace(int1d), SepIndex),
@@ -554,7 +556,7 @@ do
 
           var eidx = int2d{idxi, idxj}
           var idx = block_idx + cidx
-          var val = search(eidx, cols, nonzero_entries)
+          var val = search(eidx, cols, load_factor, nonzero_entries)
 
           if row_sep == col_sep and idx.y <= idx.x then
             if val ~= 0.0 then
@@ -1470,10 +1472,10 @@ task main()
   var mat = region(ispace(int2d, {x = banner.M, y = banner.N}), double)
   fill(mat, 0)
 
-  var nonzero_entries = region(ispace(int1d, banner.NZ), MatrixEntry)
+  var load_factor = [int](c.ceil(banner.NZ/0.75))
+  var nonzero_entries = region(ispace(int1d, load_factor), MatrixEntry)
   fill(nonzero_entries.idx, int2d{-1, -1})
   fill(nonzero_entries.val, 0)
-  fill(nonzero_entries.col, int1d{-1})
   read_matrix(matrix_file, banner, nonzero_entries)
 
   var blocks = region(ispace(int2d, {num_separators, num_separators}, {1, 1}), int1d)
@@ -1530,7 +1532,7 @@ task main()
     fill(block, 0)
     var row_dofs = separators[color.x]
     var col_dofs = separators[color.y]
-    fill_block(color, banner.N, nonzero_entries, block, row_dofs, col_dofs, clusters_region, clusters_sep, clusters_int, clusters, fpblock, debug)
+    fill_block(color, banner.N, load_factor, nonzero_entries, block, row_dofs, col_dofs, clusters_region, clusters_sep, clusters_int, clusters, fpblock, debug)
     -- nz += fill_block(color, banner.N, nonzero_entries, block, row_dofs, col_dofs, clusters_region, clusters_sep, clusters_int, clusters, fpblock, debug)
     -- regentlib.assert(nz <= banner.NZ, "Mismatch in number of entries.")
   end

@@ -18,6 +18,7 @@
 
 #include <stdlib.h>
 #include "legion/legion_c.h"
+#include "uthash.h"
 
 typedef struct SepInfo {
   int levels;
@@ -56,5 +57,12 @@ void read_vector(char* file,
                  legion_index_space_t is,
                  legion_physical_region_t pr[],
                  legion_field_id_t fld[]);
+
+uint64_t hash_jen(uint64_t key);
+uint64_t hash_fnv(uint64_t key);
+uint64_t hash_ber(uint64_t key);
+uint64_t hash_sax(uint64_t key);
+uint64_t hash_sfh(uint64_t key);
+uint64_t hash_oat(uint64_t key);
 
 #endif
