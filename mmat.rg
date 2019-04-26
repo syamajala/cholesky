@@ -1470,7 +1470,6 @@ task main()
   c.printf("Max Interval Size: %d\n", max_int_size)
 
   var mat = region(ispace(int2d, {x = banner.M, y = banner.N}), double)
-  fill(mat, 0)
 
   var load_factor = [int](c.ceil(banner.NZ/0.75))
   var nonzero_entries = region(ispace(int1d, load_factor), MatrixEntry)
@@ -1538,6 +1537,7 @@ task main()
   end
 
   -- c.printf("Filled: %d Expected: %d\n", nz, banner.NZ)
+  c.printf("Done fill.\n")
 
   if c.strcmp(permuted_matrix_file, '') ~= 0 then
     write_matrix(mat, mat_part, permuted_matrix_file, banner)
