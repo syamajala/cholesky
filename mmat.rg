@@ -1442,10 +1442,6 @@ task main()
       debug = true
     end
   end
-  var setup_start = c.legion_get_current_time_in_micros()
-  var ts_start : uint64 = 0.0
-  var ts_end : uint64 = 0.0
-  var duration : uint64 = 0.0
 
   var banner = read_matrix_banner(matrix_file)
   c.printf("M: %d N: %d nz: %d typecode: %s\n", banner.M, banner.N, banner.NZ, banner.typecode)
@@ -1480,12 +1476,7 @@ task main()
   fill(nonzero_entries.idx, int2d{-1, -1})
   fill(nonzero_entries.val, 0)
 
-  ts_start = c.legion_get_current_time_in_micros()
   read_matrix(matrix_file, banner, nonzero_entries)
-  __fence(__execution, __block)
-  ts_end = c.legion_get_current_time_in_micros()
-  duration = ts_end - ts_start
-  c.printf("{'name': 'read_matrix', 'start': %lu, 'stop': %lu, 'duration': %lu}\n", ts_start, ts_end, duration)
 
   var blocks = region(ispace(int2d, {num_separators, num_separators}, {1, 1}), int1d)
   fill(blocks, 0)
@@ -1496,17 +1487,13 @@ task main()
   var block_bounds = region(allocated_blocks_ispace, BlockBounds)
   fill(block_bounds.sep, int2d{-1, -1})
   fill(block_bounds.bounds, rect2d{lo=int2d{0, 0}, hi=int2d{-1, -1}})
-  ts_start = c.legion_get_current_time_in_micros()
+
   partition_matrix(sepinfo, separators_region, separators,
                    tree_region, tree,
                    banner, mat, block_bounds, debug)
 
   var block_bounds_part = partition(block_bounds.sep, allocated_blocks_ispace)
   var mat_part = partition_mat_by_image_range(mat, block_bounds, block_bounds_part)
-  __fence(__execution, __block)
-  ts_end = c.legion_get_current_time_in_micros()
-  duration = ts_end - ts_start
-  c.printf("{'name': 'partition_matrix', 'start': %lu, 'stop': %lu, 'duration': %lu}\n", ts_start, ts_end, duration)
 
   var nz = 0
   var interval = 0
@@ -1538,7 +1525,6 @@ task main()
 
   var cluster_bounds = partition_cluster_bounds_by_sep(cluster_bounds_region, num_separators)
 
-  ts_start = c.legion_get_current_time_in_micros()
   for color in mat_part.colors do
     var block = mat_part[color]
     -- c.printf("Filling: %d %d\n", color.x, color.y)
@@ -1550,10 +1536,6 @@ task main()
     -- nz += fill_block(color, banner.N, nonzero_entries, block, row_dofs, col_dofs, clusters_region, clusters_sep, clusters_int, clusters, fpblock, debug)
     -- regentlib.assert(nz <= banner.NZ, "Mismatch in number of entries.")
   end
-  __fence(__execution, __block)
-  ts_end = c.legion_get_current_time_in_micros()
-  duration = ts_end - ts_start
-  c.printf("{'name': 'fill_matrix', 'start': %lu, 'stop': %lu, 'duration': %lu}\n", ts_start, ts_end, duration)
 
   -- c.printf("Filled: %d Expected: %d\n", nz, banner.NZ)
   c.printf("Done fill.\n")
@@ -1583,14 +1565,8 @@ task main()
   var filled_clusters_intervals = partition(filled_clusters_filled.interval, ispace(int1d, levels))
   var filled_clusters = cross_product(filled_clusters_sep, filled_clusters_intervals)
 
-  __fence(__execution, __block)
-  ts_end = c.legion_get_current_time_in_micros()
-  duration = ts_end - setup_start
-  c.printf("{'name': 'setup', 'start': %lu, 'stop': %lu, 'duration': %lu}\n", setup_start, ts_end, duration)
-
   var factor_start = c.legion_get_current_time_in_micros()
   for lvl = levels-1, -1, -1 do
-    ts_start = c.legion_get_current_time_in_micros()
     c.printf("Factoring Level: %d\n", lvl)
 
     if lvl < 0 then
@@ -1713,17 +1689,9 @@ task main()
         end
       end
     end
-    __fence(__execution, __block)
-    ts_end = c.legion_get_current_time_in_micros()
-    duration = ts_end - ts_start
-    c.printf("{'name': 'factor_level_%d', 'start': %lu, 'stop': %lu, 'duration': %lu}\n", lvl, ts_start, ts_end, duration)
 
     interval += 1
   end
-  __fence(__execution, __block)
-  ts_end = c.legion_get_current_time_in_micros()
-  duration = ts_end - factor_start
-  c.printf("{'name': 'factor', 'start': %lu, 'stop': %lu, 'duration': %lu}\n", factor_start, ts_end, duration)
 
   c.printf("Done factoring.\n")
 
