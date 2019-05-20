@@ -16,6 +16,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
+#include <ctype.h>
 
 
 SepInfo read_separators(char *file,
@@ -55,6 +56,10 @@ SepInfo read_separators(char *file,
       legion_accessor_array_1d_write(sep_accessor, point, &separator, sizeof(int));
       legion_accessor_array_1d_write(i_accessor, point, &row, sizeof(int));
       rows = strtok(NULL, ",");
+      if (rows && isspace(*rows))
+      {
+        break;
+      }
     }
     ++i;
   }
