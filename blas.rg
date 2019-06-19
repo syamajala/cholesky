@@ -57,7 +57,9 @@ terra dpotrf_terra(rect: rect2d, m:int,
                    fld : c.legion_field_id_t)
   var rawA = get_raw_ptr_2d(rect, pr, fld)
   var uplo : rawstring = 'L'
-  lapack.LAPACKE_dpotrf(cblas.CblasColMajor, @uplo, m, rawA.ptr, rawA.offset)
+  if m ~= 0 then
+    lapack.LAPACKE_dpotrf(cblas.CblasColMajor, @uplo, m, rawA.ptr, rawA.offset)
+  end
 end
 
 __demand(__leaf)

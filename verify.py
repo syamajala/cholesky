@@ -143,6 +143,10 @@ def permute_matrix(matrix_file, separator_file):
             sep, dofs = line.split(";")
             sep = int(sep)+1
             dofs = dofs.rstrip().split(",")
+
+            if dofs[-1] == '':
+                dofs = dofs[:-1]
+
             dofs = list(map(int, dofs))
 
             separators[sep] = dofs
@@ -239,7 +243,7 @@ def debug_factor(matrix_file, separator_file, factored_mat, log_file, directory=
                     operation(mat, bounds)
                     verify(op_line, mat, bounds, directory)
 
-    print(np.allclose(cholesky_numpy, cholesky_regent, rtol=1e-04, atol=1e-04))
+    # print(np.allclose(cholesky_numpy, cholesky_regent, rtol=1e-04, atol=1e-04))
 
 
 def check_matrix(matrix_file, separator_file, factored_mat):
@@ -251,7 +255,7 @@ def check_matrix(matrix_file, separator_file, factored_mat):
     cholesky_regent = np.tril(cholesky_regent)
 
     res = np.allclose(cholesky_numpy, cholesky_regent, rtol=1e-04, atol=1e-04)
-    return res
+    return res, cholesky_numpy, cholesky_regent
 
 
 def check_solution(A, b, solution_regent):
@@ -275,4 +279,4 @@ def generate_b(n):
     scipy.io.mmwrite("B_%dx1.mtx" % n, a)
 
 
-#debug_factor("tests/lapl_400x400/lapl_20_2.mtx", "tests/lapl_400x400/lapl_20_2_ord_5.txt", "factored_matrix.mtx", "output", "steps")
+debug_factor("tests/lapl_3375x3375/lapl_15_3.mtx", "tests/lapl_3375x3375/lapl_15_3_ord_5.txt", "factored_matrix.mtx", "output", "steps")

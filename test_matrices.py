@@ -25,6 +25,11 @@ def run(**kwargs):
             "-i", kwargs["mat"], "-s", kwargs["separators"], "-c", kwargs["clusters"],
             "-b", kwargs["b"], "-o", kwargs["solution"], "-m", kwargs["factored_mat"],
             "-fflow", "0", "-ll:cpu", "3", "-fcuda", "0"]
+
+    if "csize" in kwargs:
+        args.append("-ll:csize")
+        args.append(kwargs["csize"])
+
     print(" ".join(args))
     with open(kwargs["stdout"], 'w') as f:
         subprocess.call(args, stdout=f)
@@ -62,7 +67,8 @@ class TestMatrices():
         args = generate_args(args, input_prefix, output_prefix)
 
         run(**args)
-        assert check_matrix(args['mat'], args['separators'], args['factored_mat']) is True
+        ans, _, _ = check_matrix(args['mat'], args['separators'], args['factored_mat'])
+        assert ans is True
         assert check_solution(args['mat'], args['b'], args['solution']) is True
 
     def test_25x25(self):
@@ -84,7 +90,8 @@ class TestMatrices():
         args = generate_args(args, input_prefix, output_prefix)
 
         run(**args)
-        assert check_matrix(args['mat'], args['separators'], args['factored_mat']) is True
+        ans, _, _ = check_matrix(args['mat'], args['separators'], args['factored_mat'])
+        assert ans is True
         assert check_solution(args['mat'], args['b'], args['solution']) is True
 
     def test_400x400(self):
@@ -106,7 +113,8 @@ class TestMatrices():
         args = generate_args(args, input_prefix, output_prefix)
 
         run(**args)
-        assert check_matrix(args['mat'], args['separators'], args['factored_mat']) is True
+        ans, _, _ = check_matrix(args['mat'], args['separators'], args['factored_mat'])
+        assert ans is True
         assert check_solution(args['mat'], args['b'], args['solution']) is True
 
     def test_3375x3375(self):
@@ -126,7 +134,9 @@ class TestMatrices():
                 "factored_mat": "factored_15_3.mtx",
                 "solution": "solution_3375x1.mtx"}
         args = generate_args(args, input_prefix, output_prefix)
+        args["csize"] = "4000"
 
         run(**args)
-        assert check_matrix(args['mat'], args['separators'], args['factored_mat']) is True
+        ans, _, _ = check_matrix(args['mat'], args['separators'], args['factored_mat'])
+        assert ans is True
         assert check_solution(args['mat'], args['b'], args['solution']) is True
