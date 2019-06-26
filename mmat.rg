@@ -58,7 +58,6 @@ fspace TreeNode {
 }
 
 fspace Filled {
-  nz       : int,
   filled   : int1d,
   sep      : int2d,
   interval : int1d,
@@ -146,7 +145,7 @@ do
         var val = part[idx]
         idx += {1, 1}
         if val ~= 0 then
-          c.fprintf(matrix_file, "%d %d %0.5g\n", idx.x, idx.y, val)
+          c.fprintf(matrix_file, "%d %d %0.8g\n", idx.x, idx.y, val)
         end
       end
     end
@@ -331,12 +330,14 @@ do
       var bounds = rect2d { prev_size - {size-1, size-1}, prev_size }
 
       if debug then
-        c.printf("level: %d sep: %d size: %d ", lvl, sep, size)
-        c.printf("prev_size: %d %d bounds.lo: %d %d, bounds.hi: %d %d vol: %d\n",
-                 prev_size.x, prev_size.y,
-                 bounds.lo.x, bounds.lo.y,
-                 bounds.hi.x, bounds.hi.y,
-                 c.legion_domain_get_volume(c.legion_domain_from_rect_2d(bounds)))
+        -- c.printf("level: %d sep: %d size: %d ", lvl, sep, size)
+        -- c.printf("prev_size: %d %d bounds.lo: %d %d, bounds.hi: %d %d vol: %d\n",
+        --          prev_size.x, prev_size.y,
+        --          bounds.lo.x, bounds.lo.y,
+        --          bounds.hi.x, bounds.hi.y,
+        --          c.legion_domain_get_volume(c.legion_domain_from_rect_2d(bounds)))
+        c.printf("Block: {'Block': (%d, %d), 'Lo': (%d, %d), 'Hi': (%d, %d)}\n",
+                 sep, sep, bounds.lo.x, bounds.lo.y, bounds.hi.x, bounds.hi.y)
       end
 
       var color:int2d = {x = sep, y = sep}
@@ -356,7 +357,7 @@ do
                                    {x = par_bounds.hi.x, y = bounds.hi.y } }
 
         if debug then
-          c.printf("block: %d %d bounds.lo: %d %d bounds.hi: %d %d\n", par_sep, sep,
+          c.printf("Block: {'Block': (%d, %d), 'Lo': (%d, %d), 'Hi': (%d, %d)}\n", par_sep, sep,
                    child_bounds.lo.x, child_bounds.lo.y, child_bounds.hi.x, child_bounds.hi.y)
         end
 
@@ -373,6 +374,7 @@ task partition_separator(block_color     : int2d,
                          block_bounds    : rect2d,
                          cluster_bounds  : region(ispace(int3d), ClusterBounds),
                          interval        : int,
+                         interval_lbl    : int,
                          clusters_region : region(ispace(int1d), ClusterIndex),
                          clusters_sep    : partition(disjoint, clusters_region, ispace(int1d)),
                          clusters_int    : partition(disjoint, clusters_region, ispace(int1d)),
@@ -435,12 +437,14 @@ do
       cluster_bounds[color].cluster = color
 
       if debug then
-        c.printf("\t\tcolor: %d %d %d bounds.lo: %d %d, bounds.hi: %d %d size: %d %d vol: %d\n",
+        c.printf("\t\tCluster: {'Block': (%d, %d), 'color': (%d, %d, %d), 'Lo': (%d, %d), 'Hi': (%d, %d), 'size': (%d, %d), 'vol': %d, 'Interval': %d}\n",
+                 color.x, color.y,
                  color.x, color.y, color.z,
                  bounds.lo.x, bounds.lo.y,
                  bounds.hi.x, bounds.hi.y,
                  size.x, size.y,
-                 c.legion_domain_get_volume(c.legion_domain_from_rect_2d(bounds)))
+                 c.legion_domain_get_volume(c.legion_domain_from_rect_2d(bounds)),
+                 interval_lbl)
       end
 
       prev_lo = prev_lo + int2d{0, right-left}
@@ -459,6 +463,7 @@ task partition_separators(depth                  : int,
                           tree_region            : region(ispace(int1d), TreeNode),
                           tree                   : partition(disjoint, tree_region, ispace(int1d)),
                           interval               : int,
+                          interval_lbl           : int,
                           clusters_region        : region(ispace(int1d), ClusterIndex),
                           clusters_sep           : partition(disjoint, clusters_region, ispace(int1d)),
                           clusters_int           : partition(disjoint, clusters_region, ispace(int1d)),
@@ -480,7 +485,7 @@ do
       var cluster_bound = cluster_bounds[block_color]
       -- c.printf("Partitioning: %d %d Bounds: %d %d %d %d\n", row, row, block_bound.lo.x, block_bound.lo.y, block_bound.hi.x, block_bound.hi.y)
       partition_separator(block_color, block_bound, cluster_bound,
-                          interval, clusters_region, clusters_sep, clusters_int, clusters,
+                          interval, interval_lbl, clusters_region, clusters_sep, clusters_int, clusters,
                           debug)
 
       for clvl = lvl+1, depth+1 do
@@ -493,7 +498,7 @@ do
           -- c.printf("Partitioning: %d %d Bounds: %d %d %d %d\n", row, col, block_bound.lo.x, block_bound.lo.y, block_bound.hi.x, block_bound.hi.y)
 
           partition_separator(block_color, block_bound, cluster_bound,
-                              interval, clusters_region, clusters_sep, clusters_int, clusters,
+                              interval, interval_lbl, clusters_region, clusters_sep, clusters_int, clusters,
                               debug)
         end
       end
@@ -613,7 +618,6 @@ do
       block_idx = block_idx + {row_bound, 0}
 
       var color = int3d{x = row_sep, y = col_sep, z = z}
-      filled_blocks[color].nz = nnz
 
       if nnz > 0 then
         filled_blocks[color].filled = 0
@@ -650,7 +654,6 @@ do
   var blocks = region(filled_clusters.ispace, Filled)
   copy(filled_clusters, blocks)
 
-  fill(filled_clusters.nz, 0)
   fill(filled_clusters.filled, 1)
   fill(filled_clusters.sep, int2d{-1, -1})
 
@@ -681,19 +684,18 @@ do
           var left = col_cluster[col+col_lo].idx
           var right = col_cluster[col+col_lo+1].idx
           var new_id = int3d{row_sep, col_sep, row*col_cluster_size+col}
-          -- c.printf("New Id: %d %d %d -> ", new_id.x, new_id.y, new_id.z)
+          -- c.printf("New Id: %d %d %d ->\n", new_id.x, new_id.y, new_id.z)
 
           for i = top, bottom do
             for j = left, right do
               var old_id = int3d{row_sep, col_sep, i*prev_cols+j}
-              -- c.printf("%d ", old_id.z)
-              filled_clusters[new_id].nz = filled_clusters[new_id].nz + blocks[old_id].nz
-              if filled_clusters[new_id].nz > 0 then
+              if blocks[old_id].filled == int1d{0} then
                 filled_clusters[new_id].filled = 0
               end
+              -- c.printf("\t\t   %d Old Filled: %d New Filled: %d\n",
+              --          old_id.z, blocks[old_id].filled, filled_clusters[new_id].filled)
             end
           end
-          -- c.printf("\n")
         end
       end
     end
@@ -797,7 +799,7 @@ do
   var solution = c.fopen(solution_file, 'w')
 
   for i in X.ispace do
-    c.fprintf(solution, "%0.5g\n", X[i])
+    c.fprintf(solution, "%0.8g\n", X[i])
   end
 
   c.fclose(solution)
@@ -838,8 +840,11 @@ do
 end
 
 __demand(__leaf)
-task fused_dpotrf(rA             : region(ispace(int2d), double),
-                  filled_rA      : region(ispace(ptr), Filled))
+task fused_dpotrf(rA        : region(ispace(int2d), double),
+                  filled_rA : region(ispace(ptr), Filled),
+                  level     : int,
+                  interval  : int,
+                  debug     : bool)
 where
   reads writes(rA), reads(filled_rA)
 do
@@ -848,7 +853,13 @@ do
     var color = int3d{a.sep.x, a.sep.y, a.cluster}
     var rectA = a.bounds
     var size:int2d = rectA.hi - rectA.lo + {1, 1}
-    -- c.printf("POTRF A=(%d %d %d) Size: %d %d\n", color.x, color.y, color.z, size.x, size.y)
+
+    if debug then
+      c.printf("POTRF: {'A': (%d, %d, %d), 'A_Lo': (%d, %d), 'A_Hi': (%d, %d), 'SizeA': (%d, %d), 'Block': (%d, %d), 'Level': %d, 'Interval': %d}\n",
+               color.x, color.y, color.z, rectA.lo.x, rectA.lo.y, rectA.hi.x, rectA.hi.y, size.x, size.y,
+               color.x, color.y, level, interval)
+    end
+
     -- c.printf("Before:\n")
     -- print_block(color, rA, rectA)
 
@@ -860,10 +871,13 @@ do
 end
 
 __demand(__leaf)
-task fused_dtrsm(rA                : region(ispace(int2d), double),
-                 rB                : region(ispace(int2d), double),
-                 filled_rA         : region(ispace(ptr), Filled),
-                 filled_rB         : region(ispace(ptr), Filled))
+task fused_dtrsm(rA        : region(ispace(int2d), double),
+                 rB        : region(ispace(int2d), double),
+                 filled_rA : region(ispace(ptr), Filled),
+                 filled_rB : region(ispace(ptr), Filled),
+                 level     : int,
+                 interval  : int,
+                 debug     : bool)
 where
   reads(rA, filled_rA, filled_rB), reads writes(rB)
 do
@@ -876,17 +890,20 @@ do
       var b = filled_rB[j]
       var Bcolor = int3d{b.sep.x, b.sep.y, b.cluster}
       var rectB = b.bounds
-      var size:int2d = rectB.hi - rectB.lo + {1, 1}
+      var sizeB:int2d = rectB.hi - rectB.lo + {1, 1}
 
-      -- c.printf("TRSM A=(%d %d %d) Lo: %d %d Hi: %d %d SizeA: %d %d B=(%d %d %d) Lo: %d %d Hi: %d %d SizeB: %d %d\n",
-      --          Acolor.x, Acolor.y, Acolor.z, rectA.lo.x, rectA.lo.y, rectA.hi.x, rectA.hi.y, sizeA.x, sizeA.y,
-      --          Bcolor.x, Bcolor.y, Bcolor.z, rectB.lo.x, rectB.lo.y, rectB.hi.x, rectB.hi.y, size.x, size.y)
+      if debug then
+        c.printf("TRSM: {'A': (%d, %d, %d), 'A_Lo': (%d, %d), 'A_Hi': (%d, %d), 'SizeA': (%d, %d), 'B': (%d, %d, %d), 'B_Lo': (%d, %d), 'B_Hi': (%d, %d), 'SizeB': (%d, %d), 'Block': (%d, %d), 'Level': %d, 'Interval': %d}\n",
+                 Acolor.x, Acolor.y, Acolor.z, rectA.lo.x, rectA.lo.y, rectA.hi.x, rectA.hi.y, sizeA.x, sizeA.y,
+                 Bcolor.x, Bcolor.y, Bcolor.z, rectB.lo.x, rectB.lo.y, rectB.hi.x, rectB.hi.y, sizeB.x, sizeB.y,
+                 Bcolor.x, Bcolor.y, level, interval)
+      end
 
       -- c.printf("Before:\n")
       -- print_block(Acolor, rA, rectA)
       -- print_block(Bcolor, rB, rectB)
 
-      dtrsm_terra(rectA, rectB, size.x, size.y,
+      dtrsm_terra(rectA, rectB, sizeB.x, sizeB.y,
                   __physical(rA)[0], __fields(rA)[0],
                   __physical(rB)[0], __fields(rB)[0])
 
@@ -904,8 +921,9 @@ task fused_dsyrk(rA               : region(ispace(int2d), double),
                  filled_rB        : region(ispace(ptr), Filled),
                  filled_rC        : region(ispace(ptr), Filled),
                  col_cluster_size : int,
-                 level : int,
-                 interval : int)
+                 level            : int,
+                 interval         : int,
+                 debug            : bool)
 where
   reads(rA, rB, filled_rA, filled_rB, filled_rC),
   reads writes(rC)
@@ -921,6 +939,8 @@ do
       var b = filled_rB[j]
       var Bcolor = int3d{b.sep.x, b.sep.y, b.cluster}
       var col = Bcolor.z
+      var rectB = b.bounds
+      var sizeB:int2d = rectB.hi - rectB.lo + {1, 1}
 
       var Ccolor = int3d{Acolor.x, Bcolor.x, row*col_cluster_size+col}
       var rectC = rect2d{lo=int2d{0, 0}, hi={int2d{-1, -1}}}
@@ -935,26 +955,22 @@ do
       end
 
       var vol = c.legion_domain_get_volume(c.legion_domain_from_rect_2d(rectC))
-      -- c.printf("Mult A: %d %d %d B: %d %d %d C: %d %d %d Vol: %d col_cluster_size: %d Level: %d Interval: %d\n",
-      --          Acolor.x, Acolor.y, Acolor.z,
-      --          Bcolor.x, Bcolor.y, Bcolor.z,
-      --          Ccolor.x, Ccolor.y, Ccolor.z,
-      --          vol, col_cluster_size, level, interval)
       if vol ~= 0 then
 
         var sizeC:int2d = rectC.hi - rectC.lo + {1, 1}
 
         if col < row then
-          var rectB = b.bounds
-          var sizeB:int2d = rectB.hi - rectB.lo + {1, 1}
-
           var m = sizeA.x
           var n = sizeB.x
           var k = sizeA.y
-          -- c.printf("DGEMM A: (%d %d %d) Lo: %d %d Hi: %d %d sizeA: %d x %d B: (%d %d %d) Lo: %d %d Hi: %d %d sizeB: %d x %d C: (%d %d %d) Lo: %d %d Hi: %d %d sizeC: %d x %d\n",
-          --          Acolor.x, Acolor.y, Acolor.z, rectA.lo.x, rectA.lo.y, rectA.hi.x, rectA.hi.y, sizeA.x, sizeA.y,
-          --          Bcolor.x, Bcolor.y, Bcolor.z, rectB.lo.x, rectB.lo.y, rectB.hi.x, rectB.hi.y, sizeB.x, sizeB.y,
-          --          Ccolor.x, Ccolor.y, Ccolor.z, rectC.lo.x, rectC.lo.y, rectC.hi.x, rectC.hi.y, sizeC.x, sizeC.y)
+
+          if debug then
+            c.printf("GEMM: {'A': (%d, %d, %d), 'A_Lo': (%d, %d), 'A_Hi': (%d, %d), 'sizeA': (%d, %d), 'B': (%d, %d, %d), 'B_Lo': (%d, %d), 'B_Hi': (%d, %d), 'sizeB': (%d, %d), 'C': (%d, %d, %d), 'C_Lo': (%d, %d), 'C_Hi': (%d, %d), 'sizeC': (%d, %d), 'Block': (%d, %d), 'Level': %d, 'Interval': %d}\n",
+                     Acolor.x, Acolor.y, Acolor.z, rectA.lo.x, rectA.lo.y, rectA.hi.x, rectA.hi.y, sizeA.x, sizeA.y,
+                     Bcolor.x, Bcolor.y, Bcolor.z, rectB.lo.x, rectB.lo.y, rectB.hi.x, rectB.hi.y, sizeB.x, sizeB.y,
+                     Ccolor.x, Ccolor.y, Ccolor.z, rectC.lo.x, rectC.lo.y, rectC.hi.x, rectC.hi.y, sizeC.x, sizeC.y,
+                     Ccolor.x, Ccolor.y, level, interval)
+          end
 
           -- c.printf("Before:\n")
           -- print_block(Acolor, rA, rectA)
@@ -966,18 +982,22 @@ do
                       __physical(rB)[0], __fields(rB)[0],
                       __physical(rC)[0], __fields(rC)[0])
 
-          -- c.printf("After:\n")
-          -- print_block(Acolor, rA, rectA)
-          -- print_block(Bcolor, rB, rectB)
-          -- print_block(Ccolor, rC, rectC)
-
+          --   c.printf("After:\n")
+          --   -- print_block(Acolor, rA, rectA)
+          --   -- print_block(Bcolor, rB, rectB)
+          --   print_block(Ccolor, rC, rectC)
 
         elseif col == row then
           var n = sizeC.x
           var k = sizeA.y
-          -- c.printf("DSYRK A: (%d %d %d) Lo: %d %d Hi: %d %d sizeA: %d x %d C: (%d %d %d) Lo: %d %d Hi: %d %d sizeC: %d x %d\n",
-          --          Acolor.x, Acolor.y, Acolor.z, rectA.lo.x, rectA.lo.y, rectA.hi.x, rectA.hi.y, n, k,
-          --          Ccolor.x, Ccolor.y, Ccolor.z, rectC.lo.x, rectC.lo.y, rectC.hi.x, rectC.hi.y, n, n)
+
+          if debug then
+            c.printf("GEMM: {'A': (%d, %d, %d), 'A_Lo': (%d, %d), 'A_Hi': (%d, %d), 'sizeA': (%d, %d), 'B': (%d, %d, %d), 'B_Lo': (%d, %d), 'B_Hi': (%d, %d), 'sizeB': (%d, %d), 'C': (%d, %d, %d), 'C_Lo': (%d, %d), 'C_Hi': (%d, %d), 'sizeC': (%d, %d), 'Block': (%d, %d), 'Level': %d, 'Interval': %d}\n",
+                     Acolor.x, Acolor.y, Acolor.z, rectA.lo.x, rectA.lo.y, rectA.hi.x, rectA.hi.y, sizeA.x, sizeA.y,
+                     Bcolor.x, Bcolor.y, Bcolor.z, rectB.lo.x, rectB.lo.y, rectB.hi.x, rectB.hi.y, sizeB.x, sizeB.y,
+                     Ccolor.x, Ccolor.y, Ccolor.z, rectC.lo.x, rectC.lo.y, rectC.hi.x, rectC.hi.y, sizeC.x, sizeC.y,
+                     Ccolor.x, Ccolor.y, level, interval)
+          end
 
           -- c.printf("Before:\n")
           -- print_block(Acolor, rA, rectA)
@@ -987,9 +1007,9 @@ do
                       __physical(rA)[0], __fields(rA)[0],
                       __physical(rC)[0], __fields(rC)[0])
 
-          -- c.printf("After:\n")
-          -- print_block(Acolor, rA, rectA)
-          -- print_block(Ccolor, rC, rectC)
+          --   c.printf("After:\n")
+          --   -- print_block(Acolor, rA, rectA)
+          --   print_block(Ccolor, rC, rectC)
         end
       end
     end
@@ -1003,7 +1023,10 @@ task fused_dgemm(rA               : region(ispace(int2d), double),
                  filled_rA        : region(ispace(ptr), Filled),
                  filled_rB        : region(ispace(ptr), Filled),
                  filled_rC        : region(ispace(ptr), Filled),
-                 col_cluster_size : int)
+                 col_cluster_size : int,
+                 level            : int,
+                 interval         : int,
+                 debug            : bool)
 where
   reads(rA, rB, filled_rA, filled_rB, filled_rC),
   reads writes(rC)
@@ -1033,11 +1056,6 @@ do
       end
 
       var vol = c.legion_domain_get_volume(c.legion_domain_from_rect_2d(rectC))
-      -- c.printf("Mult A: %d %d %d B: %d %d %d C: %d %d %d Vol: %d col_cluster_size: %d\n",
-      --          Acolor.x, Acolor.y, Acolor.z,
-      --          Bcolor.x, Bcolor.y, Bcolor.z,
-      --          Ccolor.x, Ccolor.y, Ccolor.z,
-      --          vol, col_cluster_size)
       if vol ~= 0 then
 
         var sizeC:int2d = rectC.hi - rectC.lo + {1, 1}
@@ -1048,10 +1066,14 @@ do
         var m = sizeA.x
         var n = sizeB.x
         var k = sizeA.y
-        -- c.printf("DGEMM A: (%d %d %d) Lo: %d %d Hi: %d %d sizeA: %d x %d B: (%d %d %d) Lo: %d %d Hi: %d %d sizeB: %d x %d C: (%d %d %d) Lo: %d %d Hi: %d %d sizeC: %d x %d\n",
-        --          Acolor.x, Acolor.y, Acolor.z, rectA.lo.x, rectA.lo.y, rectA.hi.x, rectA.hi.y, sizeA.x, sizeA.y,
-        --          Bcolor.x, Bcolor.y, Bcolor.z, rectB.lo.x, rectB.lo.y, rectB.hi.x, rectB.hi.y, sizeB.x, sizeB.y,
-        --          Ccolor.x, Ccolor.y, Ccolor.z, rectC.lo.x, rectC.lo.y, rectC.hi.x, rectC.hi.y, sizeC.x, sizeC.y)
+
+        if debug then
+          c.printf("GEMM: {'A': (%d, %d, %d), 'A_Lo': (%d, %d), 'A_Hi': (%d, %d), 'sizeA': (%d, %d), 'B': (%d, %d, %d), 'B_Lo': (%d, %d), 'B_Hi': (%d, %d), 'sizeB': (%d, %d), 'C': (%d, %d, %d), 'C_Lo': (%d, %d), 'C_Hi': (%d, %d), 'sizeC': (%d, %d), 'Block': (%d, %d), 'Level': %d, 'Interval': %d}\n",
+                   Acolor.x, Acolor.y, Acolor.z, rectA.lo.x, rectA.lo.y, rectA.hi.x, rectA.hi.y, sizeA.x, sizeA.y,
+                   Bcolor.x, Bcolor.y, Bcolor.z, rectB.lo.x, rectB.lo.y, rectB.hi.x, rectB.hi.y, sizeB.x, sizeB.y,
+                   Ccolor.x, Ccolor.y, Ccolor.z, rectC.lo.x, rectC.lo.y, rectC.hi.x, rectC.hi.y, sizeC.x, sizeC.y,
+                   Ccolor.x, Ccolor.y, level, interval)
+        end
 
         -- c.printf("Before:\n")
         -- print_block(Acolor, rA, rectA)
@@ -1153,12 +1175,12 @@ where
   reads writes(filled_clusters_region, filled_clusters_region2, cluster_bounds_region)
 do
   var interval = 0
-  var i = 0
+  var idx = 0
   var interval_lbl = 0
 
   for lvl = levels-1, -1, -1 do
     partition_separators(lvl, tree_region, tree,
-                         interval, clusters_region, clusters_sep, clusters_int, clusters,
+                         interval, interval_lbl, clusters_region, clusters_sep, clusters_int, clusters,
                          block_bounds, cluster_bounds_region, cluster_bounds,
                          debug)
 
@@ -1186,23 +1208,25 @@ do
             for i = 0, A_clusters do
               var A_color = int3d{grandpar_sep, sep, i}
 
-              if filled_clusters_region[A_color].nz > 0 then
+              if filled_clusters_region[A_color].filled == int1d{0} then
                 for j = 0, B_clusters do
                   var B_color = int3d{par_sep, sep, j}
+                  var C_color = int3d{grandpar_sep, par_sep, i*col_cluster_size+j}
+                  -- c.printf("Level: %d Interval: %d A: %d %d %d Filled: %d B: %d %d %d Filled: %d C: %d %d %d I: %d J: %d Filled: ",
+                  --          lvl, interval_lbl,
+                  --          A_color.x, A_color.y, A_color.z, filled_clusters_region[A_color].filled,
+                  --          B_color.x, B_color.y, B_color.z, filled_clusters_region[B_color].filled,
+                  --          C_color.x, C_color.y, C_color.z, i, j)
 
-                  if filled_clusters_region[B_color].nz > 0 then
+                  if filled_clusters_region[B_color].filled == int1d{0} then
                     if j <= i then
-                      var C_color = int3d{grandpar_sep, par_sep, i*col_cluster_size+j}
-
-                      if filled_clusters_region[C_color].nz <= 0 then
-                      -- c.printf("Level: %d Interval: %d Block: %d %d %d Filled.\n",
-                      --          lvl, interval,
-                      --          C_color.x, C_color.y, C_color.z)
-                        filled_clusters_region[C_color].nz = filled_clusters_region[A_color].nz * filled_clusters_region[B_color].nz
+                      if filled_clusters_region[C_color].filled == int1d{1} then
                         filled_clusters_region[C_color].filled = 0
                       end
                     end
                   end
+                  -- c.printf("%d\n", filled_clusters_region[C_color].filled)
+
                 end
               end
             end
@@ -1210,21 +1234,23 @@ do
             for i = 0, A_clusters do
               var A_color = int3d{grandpar_sep, sep, i}
 
-              if filled_clusters_region[A_color].nz > 0 then
+              if filled_clusters_region[A_color].filled == int1d{0} then
                 for j = 0, B_clusters do
                   var B_color = int3d{par_sep, sep, j}
+                  var C_color = int3d{grandpar_sep, par_sep, i*col_cluster_size+j}
+                  -- c.printf("Level: %d Interval: %d A: %d %d %d Filled: %d B: %d %d %d Filled: %d C: %d %d %d I: %d J: %d Filled: ",
+                  --          lvl, interval_lbl,
+                  --          A_color.x, A_color.y, A_color.z, filled_clusters_region[A_color].filled,
+                  --          B_color.x, B_color.y, B_color.z, filled_clusters_region[B_color].filled,
+                  --          C_color.x, C_color.y, C_color.z, i, j)
 
-                  if filled_clusters_region[B_color].nz > 0 then
-                    var C_color = int3d{grandpar_sep, par_sep, i*col_cluster_size+j}
-
-                    if filled_clusters_region[C_color].nz <= 0 then
-                      -- c.printf("Level: %d Interval: %d Block: %d %d %d Filled.\n",
-                      --          lvl, interval,
-                      --          C_color.x, C_color.y, C_color.z)
-                      filled_clusters_region[C_color].nz = filled_clusters_region[A_color].nz * filled_clusters_region[B_color].nz
+                  if filled_clusters_region[B_color].filled == int1d{0} then
+                    if filled_clusters_region[C_color].filled == int1d{1} then
                       filled_clusters_region[C_color].filled = 0
                     end
                   end
+                  -- c.printf("%d\n", filled_clusters_region[C_color].filled)
+
                 end
               end
             end
@@ -1236,18 +1262,20 @@ do
 
     for j in filled_clusters_region.ispace do
       var sep = int2d{j.x, j.y}
-      filled_clusters_region2[i].nz = filled_clusters_region[j].nz
-      filled_clusters_region2[i].filled = filled_clusters_region[j].filled
-      filled_clusters_region2[i].sep = sep
-      filled_clusters_region2[i].interval = interval_lbl
-      filled_clusters_region2[i].cluster = j.z
+      filled_clusters_region2[idx].filled = filled_clusters_region[j].filled
+      filled_clusters_region2[idx].sep = sep
+      filled_clusters_region2[idx].interval = interval_lbl
+      filled_clusters_region2[idx].cluster = j.z
       var clust = cluster_bounds[sep]
-      filled_clusters_region2[i].bounds = clust[j].bounds
+      filled_clusters_region2[idx].bounds = clust[j].bounds
       var size = clust[j].bounds.hi - clust[j].bounds.lo + {1, 1}
-      -- c.printf("Level: %d Interval: %d Cluster: %d %d %d Filled: %d Lo: %d %d Hi: %d %d Size: %d %d\n",
-      --          lvl, interval_lbl, j.x, j.y, j.z, filled_clusters_region[j].filled,
-      --          clust[j].bounds.lo.x, clust[j].bounds.lo.y, clust[j].bounds.hi.x, clust[j].bounds.hi.y, size.x, size.y)
-      i += 1
+      if debug and filled_clusters_region[j].filled == int1d{0} then
+        c.printf("Fill: {'Level': %d, 'Interval': %d, 'Block': (%d, %d), 'Cluster': (%d, %d, %d), 'Filled': %d, 'Lo': (%d, %d), 'Hi': (%d, %d), 'Size': (%d, %d)}\n",
+                 lvl, interval_lbl, j.x, j.y, j.x, j.y, j.z, filled_clusters_region[j].filled,
+                 clust[j].bounds.lo.x, clust[j].bounds.lo.y, clust[j].bounds.hi.x, clust[j].bounds.hi.y, size.x, size.y)
+      end
+
+      idx += 1
     end
 
     interval_lbl += 1
@@ -1391,7 +1419,6 @@ task main()
   c.printf("Clusters ispace: %d\n", allocated_clusters_ispace.volume)
 
   var filled_clusters_region = region(allocated_clusters_ispace, Filled)
-  fill(filled_clusters_region.nz, -1)
   fill(filled_clusters_region.filled, 1)
   fill(filled_clusters_region.sep, int2d{-1, -1})
   fill(filled_clusters_region.interval, -1)
@@ -1429,7 +1456,6 @@ task main()
   -- regentlib.assert(nz == banner.NZ, "Mismatch in number of entries.")
 
   var filled_clusters_region2 = region(ispace(ptr, allocated_clusters_ispace.volume*levels), Filled)
-  fill(filled_clusters_region2.nz, -1)
   fill(filled_clusters_region2.filled, 1)
   fill(filled_clusters_region2.sep, int2d{-1, -1})
   fill(filled_clusters_region2.interval, -1)
@@ -1449,7 +1475,7 @@ task main()
 
   var factor_start = c.legion_get_current_time_in_micros()
   for lvl = levels-1, -1, -1 do
-    c.printf("Factoring Level: %d\n", lvl)
+    c.printf("Factoring Level: %d Interval: %d\n", lvl, interval)
 
     if lvl < 0 then
       factor(lvl, tree_region, tree,
@@ -1466,15 +1492,15 @@ task main()
         var sep = level[sep_idx].node
         var pivot_color = int2d{sep, sep}
         var filled_pivot = filled_clusters[pivot_color][interval_lbl]
-        fused_dpotrf(mat_part[pivot_color], filled_pivot)
+        fused_dpotrf(mat_part[pivot_color], filled_pivot, lvl, interval_lbl, debug)
 
         if debug then
-          var pivot = mat_part[pivot_color]
-          var sizeA = pivot.bounds.hi - pivot.bounds.lo + {1, 1}
+          -- var pivot = mat_part[pivot_color]
+          -- var sizeA = pivot.bounds.hi - pivot.bounds.lo + {1, 1}
 
-          c.printf("Level: %d POTRF A=(%d, %d)\nSize: %dx%d Lo: %d %d Hi: %d %d\n\n",
-                   lvl, sep, sep, sizeA.x, sizeA.y,
-                   pivot.bounds.lo.x, pivot.bounds.lo.y, pivot.bounds.hi.x, pivot.bounds.hi.y)
+          -- c.printf("Level: %d POTRF A=(%d, %d)\nSize: %dx%d Lo: %d %d Hi: %d %d\n\n",
+          --          lvl, sep, sep, sizeA.x, sizeA.y,
+          --          pivot.bounds.lo.x, pivot.bounds.lo.y, pivot.bounds.hi.x, pivot.bounds.hi.y)
 
           write_blocks(mat, mat_part, lvl, pivot_color, int2d{0, 0}, int2d{0, 0}, "POTRF", banner, debug_path)
         end
@@ -1496,20 +1522,20 @@ task main()
           var filled_off_diag = filled_clusters[off_diag_color][interval_lbl]
 
           fused_dtrsm(mat_part[pivot_color], mat_part[off_diag_color],
-                      filled_pivot, filled_off_diag)
+                      filled_pivot, filled_off_diag, lvl, interval_lbl, debug)
 
           if debug then
-            var pivot = mat_part[pivot_color]
-            var sizeA = pivot.bounds.hi - pivot.bounds.lo + {1, 1}
-            var off_diag = mat_part[off_diag_color]
-            var sizeB = off_diag.bounds.hi - off_diag.bounds.lo + {1, 1}
+            -- var pivot = mat_part[pivot_color]
+            -- var sizeA = pivot.bounds.hi - pivot.bounds.lo + {1, 1}
+            -- var off_diag = mat_part[off_diag_color]
+            -- var sizeB = off_diag.bounds.hi - off_diag.bounds.lo + {1, 1}
 
-            c.printf("\tLevel: %d TRSM A=(%d, %d) B=(%d, %d)\n\tSizeA: %dx%d Lo: %d %d Hi: %d %d SizeB: %dx%d Lo: %d %d Hi: %d %d\n\n",
-                     par_lvl, sep, sep, par_sep, sep,
-                     sizeA.x, sizeA.y, pivot.bounds.lo.x, pivot.bounds.lo.y, pivot.bounds.hi.x, pivot.bounds.hi.y,
-                     sizeB.x, sizeB.y, off_diag.bounds.lo.x, off_diag.bounds.lo.y, off_diag.bounds.hi.x, off_diag.bounds.hi.y)
+            -- c.printf("\tLevel: %d TRSM A=(%d, %d) B=(%d, %d)\n\tSizeA: %dx%d Lo: %d %d Hi: %d %d SizeB: %dx%d Lo: %d %d Hi: %d %d\n\n",
+            --          par_lvl, sep, sep, par_sep, sep,
+            --          sizeA.x, sizeA.y, pivot.bounds.lo.x, pivot.bounds.lo.y, pivot.bounds.hi.x, pivot.bounds.hi.y,
+            --          sizeB.x, sizeB.y, off_diag.bounds.lo.x, off_diag.bounds.lo.y, off_diag.bounds.hi.x, off_diag.bounds.hi.y)
 
-            write_blocks(mat, mat_part, par_lvl, pivot_color, off_diag_color, int2d{0, 0}, "TRSM", banner, debug_path)
+            write_blocks(mat, mat_part, lvl, pivot_color, off_diag_color, int2d{0, 0}, "TRSM", banner, debug_path)
           end
         end
       end
@@ -1540,30 +1566,30 @@ task main()
 
             if grandpar_sep == par_sep then
               fused_dsyrk(mat_part[A_color], mat_part[B_color], mat_part[C_color],
-                          filled_A, filled_B, filled_C, col_cluster_size, lvl, interval_lbl)
+                          filled_A, filled_B, filled_C, col_cluster_size, lvl, interval_lbl, debug)
             else
               fused_dgemm(mat_part[A_color], mat_part[B_color], mat_part[C_color],
-                          filled_A, filled_B, filled_C, col_cluster_size)
+                          filled_A, filled_B, filled_C, col_cluster_size, lvl, interval_lbl, debug)
             end
 
             if debug then
-              var A = mat_part[A_color]
-              var B = mat_part[B_color]
-              var C = mat_part[C_color]
-              var sizeA = A.bounds.hi - A.bounds.lo + {1, 1}
-              var sizeB = B.bounds.hi - B.bounds.lo + {1, 1}
-              var sizeC = C.bounds.hi - C.bounds.lo + {1, 1}
+              -- var A = mat_part[A_color]
+              -- var B = mat_part[B_color]
+              -- var C = mat_part[C_color]
+              -- var sizeA = A.bounds.hi - A.bounds.lo + {1, 1}
+              -- var sizeB = B.bounds.hi - B.bounds.lo + {1, 1}
+              -- var sizeC = C.bounds.hi - C.bounds.lo + {1, 1}
 
-              c.printf("\tLevel: %d GEMM A=(%d, %d) B=(%d, %d) C=(%d, %d)\n\tSizeA: %dx%d Lo: %d %d Hi: %d %d SizeB: %dx%d Lo: %d %d Hi: %d %d SizeC: %dx%d Lo: %d %d Hi: %d %d\n\n",
-                       grandpar_lvl,
-                       grandpar_sep, sep,
-                       par_sep, sep,
-                       grandpar_sep, par_sep,
-                       sizeA.x, sizeA.y, A.bounds.lo.x, A.bounds.lo.y, A.bounds.hi.x, A.bounds.hi.y,
-                       sizeB.x, sizeB.y, B.bounds.lo.x, B.bounds.lo.y, B.bounds.hi.x, B.bounds.hi.y,
-                       sizeC.x, sizeC.y, C.bounds.lo.x, C.bounds.lo.y, C.bounds.hi.x, C.bounds.hi.y)
+              -- c.printf("\tLevel: %d GEMM A=(%d, %d) B=(%d, %d) C=(%d, %d)\n\tSizeA: %dx%d Lo: %d %d Hi: %d %d SizeB: %dx%d Lo: %d %d Hi: %d %d SizeC: %dx%d Lo: %d %d Hi: %d %d\n\n",
+              --          grandpar_lvl,
+              --          grandpar_sep, sep,
+              --          par_sep, sep,
+              --          grandpar_sep, par_sep,
+              --          sizeA.x, sizeA.y, A.bounds.lo.x, A.bounds.lo.y, A.bounds.hi.x, A.bounds.hi.y,
+              --          sizeB.x, sizeB.y, B.bounds.lo.x, B.bounds.lo.y, B.bounds.hi.x, B.bounds.hi.y,
+              --          sizeC.x, sizeC.y, C.bounds.lo.x, C.bounds.lo.y, C.bounds.hi.x, C.bounds.hi.y)
 
-              write_blocks(mat, mat_part, grandpar_lvl, A_color, B_color, C_color, "GEMM", banner, debug_path)
+              write_blocks(mat, mat_part, lvl, A_color, B_color, C_color, "GEMM", banner, debug_path)
             end
             grandpar_idx = [int](grandpar_idx/2)
           end

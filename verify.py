@@ -18,10 +18,15 @@ import scipy
 import scipy.linalg
 import scipy.io
 import numpy as np
-import re
+import pandas as pd
 import os
-import itertools as it
 import collections
+
+
+def eval_line(line, offset):
+    line = line[offset:]
+    line = eval(line)
+    return line
 
 
 def print_matrix(mat):
@@ -53,63 +58,61 @@ def gemm(mat, bounds):
         mat[rC, cC] = np.tril(mat[rC, cC])
 
 
-arg_map = {0: "A", 1: "B", 2: "C"}
-
-
 def compute_bounds(line):
-    los = re.findall(r'Lo: \d+ \d+', line)
-    his = re.findall(r'Hi: \d+ \d+', line)
-
-    los = list(map(lambda lo: lo.split(" "), los))
-    los = list(map(lambda lo: (int(lo[1]), int(lo[2])), los))
-
-    his = list(map(lambda hi: hi.split(" "), his))
-    his = list(map(lambda hi: (int(hi[1])+1, int(hi[2])+1), his))
-
     bounds = {}
-    for idx, lo_hi in enumerate(list(zip(los, his))):
-        lo, hi = lo_hi
-        row = (lo[0], hi[0])
-        col = (lo[1], hi[1])
-        bounds[arg_map[idx]] = (slice(*row), slice(*col))
+
+    for block in ["A", "B", "C"]:
+        lo = f"{block}_Lo"
+        hi = f"{block}_Hi"
+        if lo in line and hi in line:
+            lo = line[lo]
+            hi = line[hi]
+            row = (lo[0], hi[0]+1)
+            col = (lo[1], hi[1]+1)
+
+            bounds[block] = (slice(*row), slice(*col))
 
     return bounds
 
 
-def find_file(line, directory=""):
+def find_file(line):
 
-    lvl = re.findall(r'Level: \d+', line)[0]
-    lvl = int(line.split(" ")[1])
+    blocks = {}
 
-    blocks = re.findall(r'\((.*?,.*?)\)', line)
-    blocks = list(map(lambda b: b.split(','), blocks))
-    blocks = list(map(lambda b: (int(b[0]), int(b[1])), blocks))
-    blocks = list(it.chain.from_iterable(blocks))
+    for block in ["A", "B", "C"]:
+        if block in line:
+            blocks[block] = '%d%d' % (line[block][0], line[block][1])
 
-    if "POTRF" in line:
-        op = "potrf_lvl%d_a%d%d.mtx" % (lvl, *blocks)
-    elif "TRSM" in line:
-        op = "trsm_lvl%d_a%d%d_b%d%d.mtx" % (lvl, *blocks)
-    elif "GEMM" in line:
-        op = "gemm_lvl%d_a%d%d_b%d%d_c%d%d.mtx" % (lvl, *blocks)
+    if line['op'] == "POTRF":
+        op = f"potrf_lvl{line['Level']}_a{blocks['A']}.mtx"
+    elif line['op'] == "TRSM":
+        op = f"trsm_lvl{line['Level']}_a{blocks['A']}_b{blocks['B']}.mtx"
+    elif line['op'] == "GEMM":
+        op = f"gemm_lvl{line['Level']}_a{blocks['A']}_b{blocks['B']}_c{blocks['C']}.mtx"
 
-    return os.path.join(directory, op)
+    return op
 
 
 def verify(line, mat, bounds, directory=""):
-    print("Verifying:", line)
-    output_file = find_file(line, directory)
+    output_file = find_file(line)
+    print("Verifying:", output_file)
+    output_file = os.path.join(directory, output_file)
     output = scipy.io.mmread(output_file)
     output = output.toarray()
     output = np.tril(output)
 
     try:
-        for k, v in bounds.items():
-            rV, cV = v
-            assert(np.allclose(mat[rV, cV], output[rV, cV], rtol=1e-04, atol=1e-04))
+        for idx, row in bounds.iterrows():
+            lo = row["Lo"]
+            hi = row["Hi"]
+
+            rV = slice(lo[0], hi[0]+1)
+            cV = slice(lo[1], hi[1]+1)
+
+            assert np.allclose(mat[rV, cV], output[rV, cV], rtol=1e-04, atol=1e-04) is True
     except AssertionError as ex:
+        print(f"{row['color']} differ!")
         diff = mat - output
-        print(k, v)
         print("Python:")
         print_matrix(mat[rV, cV])
         print()
@@ -213,9 +216,6 @@ def permute_matrix(matrix_file, separator_file):
 def debug_factor(matrix_file, separator_file, factored_mat, log_file, directory=""):
     nzs, mat = permute_matrix(matrix_file, separator_file)
 
-    factored_mat = os.path.join(directory, factored_mat)
-    log_file = os.path.join(directory, log_file)
-
     omat = np.array(mat)
 
     cholesky_numpy = scipy.linalg.cholesky(omat, lower=True)
@@ -224,26 +224,55 @@ def debug_factor(matrix_file, separator_file, factored_mat, log_file, directory=
     cholesky_regent = cholesky_regent.toarray()
     cholesky_regent = np.tril(cholesky_regent)
 
+    last_block = None
+    last_line = None
+    op = None
+    blocks = []
+    clusters = []
+
     with open(log_file, 'r') as f:
         for line in f:
             line = line.lstrip().rstrip()
-            if line.startswith("Level"):
-                op_line = line
-                if "POTRF" in line:
-                    operation = potrf
-                elif "TRSM" in line:
-                    operation = trsm
-                elif "GEMM" in line:
-                    operation = gemm
-                else:
-                    operation = None
-            elif line.startswith("Size"):
-                if operation:
-                    bounds = compute_bounds(line)
-                    operation(mat, bounds)
-                    verify(op_line, mat, bounds, directory)
+            if line.startswith("Block:"):
+                line = eval_line(line, line.index(':')+1)
+                blocks.append(line)
+            elif line.startswith("Cluster:"):
+                line = eval_line(line, line.index(':')+1)
+                clusters.append(line)
 
-    # print(np.allclose(cholesky_numpy, cholesky_regent, rtol=1e-04, atol=1e-04))
+    blocks = pd.DataFrame(blocks)
+    clusters = pd.DataFrame(clusters)
+
+    with open(log_file, 'r') as f:
+        for line in f:
+            line = line.lstrip().rstrip()
+            if line.startswith("POTRF:"):
+                operation = potrf
+                op = "POTRF"
+            elif line.startswith("TRSM:"):
+                operation = trsm
+                op = "TRSM"
+            elif line.startswith("GEMM:"):
+                operation = gemm
+                op = "GEMM"
+            else:
+                continue
+
+            line = eval_line(line, line.index(':')+1)
+            line["op"] = op
+            bounds = compute_bounds(line)
+            operation(mat, bounds)
+
+            if last_block is None:
+                last_block = line["Block"]
+            elif last_block != line["Block"] or last_line['op'] != op:
+                part = clusters[(clusters['Interval'] == last_line['Interval']) & (clusters['Block'] == last_block)]
+                verify(last_line, mat, part, directory)
+                last_block = line["Block"]
+
+            last_line = line
+
+    print(np.allclose(cholesky_numpy, cholesky_regent, rtol=1e-04, atol=1e-04))
 
 
 def check_matrix(matrix_file, separator_file, factored_mat):
@@ -279,4 +308,4 @@ def generate_b(n):
     scipy.io.mmwrite("B_%dx1.mtx" % n, a)
 
 
-debug_factor("tests/lapl_3375x3375/lapl_15_3.mtx", "tests/lapl_3375x3375/lapl_15_3_ord_5.txt", "factored_matrix.mtx", "output", "steps")
+# debug_factor("tests/lapl_3375x3375/lapl_15_3.mtx", "tests/lapl_3375x3375/lapl_15_3_ord_5.txt", "factored_matrix.mtx", "output", "steps")
