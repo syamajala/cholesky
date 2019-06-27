@@ -58,7 +58,12 @@ terra dpotrf_terra(rect: rect2d, m:int,
   var rawA = get_raw_ptr_2d(rect, pr, fld)
   var uplo : rawstring = 'L'
   if m ~= 0 then
+    -- var start = c.legion_get_current_time_in_micros()
+
     lapack.LAPACKE_dpotrf(cblas.CblasColMajor, @uplo, m, rawA.ptr, rawA.offset)
+
+    -- var stop = c.legion_get_current_time_in_micros()
+    -- c.printf("BLAS: {'op': 'POTRF', 'M': %d, 'Time': %lu}\n", m, stop - start)
   end
 end
 
@@ -80,8 +85,13 @@ terra dtrsm_terra(rectA:rect2d, rectB:rect2d, m:int, n:int,
   var rawB = get_raw_ptr_2d(rectB, prB, fldB)
   var alpha = 1.0
 
+  -- var start = c.legion_get_current_time_in_micros()
+
   cblas.cblas_dtrsm(cblas.CblasColMajor, cblas.CblasRight, cblas.CblasLower, cblas.CblasTrans, cblas.CblasNonUnit,
                     m, n, alpha, rawA.ptr, rawA.offset, rawB.ptr, rawB.offset)
+
+  -- var stop = c.legion_get_current_time_in_micros()
+  -- c.printf("BLAS: {'op': 'TRSM', 'M': %d, 'N': %d, 'Time': %lu}\n", m, n, stop - start)
 end
 
 __demand(__leaf)
@@ -114,10 +124,15 @@ terra dgemm_terra(rectA:rect2d, rectB:rect2d, rectC:rect2d,
   var rawB = get_raw_ptr_2d(rectB, prB, fldB)
   var rawC = get_raw_ptr_2d(rectC, prC, fldC)
 
+  -- var start = c.legion_get_current_time_in_micros()
+
   cblas.cblas_dgemm(cblas.CblasColMajor, cblas.CblasNoTrans, cblas.CblasTrans, m, n, k,
                     alpha, rawA.ptr, rawA.offset,
                     rawB.ptr, rawB.offset,
                     beta, rawC.ptr, rawC.offset)
+
+  -- var stop = c.legion_get_current_time_in_micros()
+  -- c.printf("BLAS: {'op': 'GEMM', 'M': %d, 'N': %d, 'K': %d, 'Time': %lu}\n", m, n, k, stop - start)
 end
 
 __demand(__leaf)
@@ -156,9 +171,14 @@ terra dsyrk_terra(rectA:rect2d, rectC:rect2d,
   var rawA = get_raw_ptr_2d(rectA, prA, fldA)
   var rawC = get_raw_ptr_2d(rectC, prC, fldC)
 
+  -- var start = c.legion_get_current_time_in_micros()
+
   cblas.cblas_dsyrk(cblas.CblasColMajor, cblas.CblasLower, cblas.CblasNoTrans, n, k,
                    alpha, rawA.ptr, rawA.offset,
                    beta, rawC.ptr, rawC.offset)
+
+  -- var stop = c.legion_get_current_time_in_micros()
+  -- c.printf("BLAS: {'op': 'SYRK', 'N': %d, 'K': %d, 'Time': %lu}\n", n, k, stop - start)
 
 end
 
