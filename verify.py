@@ -308,4 +308,4 @@ def generate_b(n):
     scipy.io.mmwrite("B_%dx1.mtx" % n, a)
 
 
-debug_factor("tests/lapl_3375x3375/lapl_15_3.mtx", "tests/lapl_3375x3375/lapl_15_3_ord_5.txt", "factored_matrix.mtx", "output", "steps")
+# debug_factor("tests/lapl_3375x3375/lapl_15_3.mtx", "tests/lapl_3375x3375/lapl_15_3_ord_5.txt", "factored_matrix.mtx", "output", "steps")

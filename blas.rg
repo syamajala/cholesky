@@ -32,9 +32,9 @@ end
 
 local raw_ptr = raw_ptr_factory(double)
 
-terra get_raw_ptr_2d(rect: rect2d,
-                     pr : c.legion_physical_region_t,
-                     fld : c.legion_field_id_t)
+terra get_raw_ptr_2d(rect : rect2d,
+                     pr   : c.legion_physical_region_t,
+                     fld  : c.legion_field_id_t)
   var fa = c.legion_physical_region_get_field_accessor_array_2d(pr, fld)
   var subrect : c.legion_rect_2d_t
   var offsets : c.legion_byte_offset_t[2]
@@ -42,9 +42,9 @@ terra get_raw_ptr_2d(rect: rect2d,
   return raw_ptr { ptr = [&double](ptr), offset = offsets[1].offset / sizeof(double) }
 end
 
-terra get_raw_ptr_1d(rect: rect1d,
-                     pr : c.legion_physical_region_t,
-                     fld : c.legion_field_id_t)
+terra get_raw_ptr_1d(rect : rect1d,
+                     pr   : c.legion_physical_region_t,
+                     fld  : c.legion_field_id_t)
   var fa = c.legion_physical_region_get_field_accessor_array_1d(pr, fld)
   var subrect : c.legion_rect_1d_t
   var offsets : c.legion_byte_offset_t[1]
@@ -52,9 +52,17 @@ terra get_raw_ptr_1d(rect: rect1d,
   return raw_ptr { ptr = [&double](ptr), offset = offsets[0].offset / sizeof(double) }
 end
 
-terra dpotrf_terra(rect: rect2d, m:int,
-                   pr : c.legion_physical_region_t,
-                   fld : c.legion_field_id_t)
+fspace Filled {
+  filled   : int1d,
+  sep      : int2d,
+  interval : int1d,
+  cluster  : int1d,
+  bounds   : rect2d
+}
+
+terra dpotrf_terra(rect : rect2d, m:int,
+                   pr   : c.legion_physical_region_t,
+                   fld  : c.legion_field_id_t)
   var rawA = get_raw_ptr_2d(rect, pr, fld)
   var uplo : rawstring = 'L'
   if m ~= 0 then
@@ -69,18 +77,19 @@ end
 
 __demand(__leaf)
 task dpotrf(rA : region(ispace(int2d), double))
-where reads writes(rA)
+where
+  reads writes(rA)
 do
   var rect = rA.bounds
   var size:int2d = rect.hi - rect.lo + {1, 1}
   dpotrf_terra(rect, size.x, __physical(rA)[0], __fields(rA)[0])
 end
 
-terra dtrsm_terra(rectA:rect2d, rectB:rect2d, m:int, n:int,
-                  prA : c.legion_physical_region_t,
-                  fldA : c.legion_field_id_t,
-                  prB : c.legion_physical_region_t,
-                  fldB : c.legion_field_id_t)
+terra dtrsm_terra(rectA : rect2d, rectB : rect2d, m : int, n : int,
+                  prA   : c.legion_physical_region_t,
+                  fldA  : c.legion_field_id_t,
+                  prB   : c.legion_physical_region_t,
+                  fldB  : c.legion_field_id_t)
   var rawA = get_raw_ptr_2d(rectA, prA, fldA)
   var rawB = get_raw_ptr_2d(rectB, prB, fldB)
   var alpha = 1.0
@@ -97,7 +106,9 @@ end
 __demand(__leaf)
 task dtrsm(rA : region(ispace(int2d), double),
            rB : region(ispace(int2d), double))
-where reads(rA), reads writes(rB)
+where
+  reads(rA),
+  reads writes(rB)
 do
   var rectA = rA.bounds
   var rectB = rB.bounds
@@ -108,14 +119,13 @@ do
               __physical(rB)[0], __fields(rB)[0])
 end
 
-terra dgemm_terra(rectA:rect2d, rectB:rect2d, rectC:rect2d,
-                  m:int, n:int, k:int,
-                  prA : c.legion_physical_region_t,
-                  fldA : c.legion_field_id_t,
-                  prB : c.legion_physical_region_t,
-                  fldB : c.legion_field_id_t,
-                  prC : c.legion_physical_region_t,
-                  fldC : c.legion_field_id_t)
+terra dgemm_terra(rectA : rect2d, rectB : rect2d, rectC : rect2d, m : int, n : int, k : int,
+                  prA   : c.legion_physical_region_t,
+                  fldA  : c.legion_field_id_t,
+                  prB   : c.legion_physical_region_t,
+                  fldB  : c.legion_field_id_t,
+                  prC   : c.legion_physical_region_t,
+                  fldC  : c.legion_field_id_t)
 
   var alpha = -1.0
   var beta = 1.0
@@ -139,7 +149,9 @@ __demand(__leaf)
 task dgemm(rA : region(ispace(int2d), double),
            rB : region(ispace(int2d), double),
            rC : region(ispace(int2d), double))
-where reads(rA, rB), reads writes(rC)
+where
+  reads(rA, rB),
+  reads writes(rC)
 do
   var rectA = rA.bounds
   var sizeA:int2d = rectA.hi - rectA.lo + {1, 1}
@@ -158,12 +170,11 @@ do
               __physical(rC)[0], __fields(rC)[0])
 end
 
-terra dsyrk_terra(rectA:rect2d, rectC:rect2d,
-                  n:int, k:int,
-                  prA : c.legion_physical_region_t,
-                  fldA : c.legion_field_id_t,
-                  prC : c.legion_physical_region_t,
-                  fldC : c.legion_field_id_t)
+terra dsyrk_terra(rectA : rect2d, rectC : rect2d, n : int, k : int,
+                  prA   : c.legion_physical_region_t,
+                  fldA  : c.legion_field_id_t,
+                  prC   : c.legion_physical_region_t,
+                  fldC  : c.legion_field_id_t)
 
   var alpha = -1.0
   var beta = 1.0
@@ -185,7 +196,9 @@ end
 __demand(__leaf)
 task dsyrk(rA : region(ispace(int2d), double),
            rC : region(ispace(int2d), double))
-where reads(rA), reads writes(rC)
+where
+  reads(rA),
+  reads writes(rC)
 do
   var rectA = rA.bounds
   var sizeA:int2d = rectA.hi - rectA.lo + {1, 1}
@@ -201,11 +214,11 @@ do
 end
 
 
-terra dtrsv_terra(rectA:rect2d, rectB:rect1d, uplo:int, trans:int, n:int,
-                  prA : c.legion_physical_region_t,
-                  fldA : c.legion_field_id_t,
-                  prB : c.legion_physical_region_t,
-                  fldB : c.legion_field_id_t)
+terra dtrsv_terra(rectA : rect2d, rectB : rect1d, uplo : int, trans : int, n : int,
+                  prA   : c.legion_physical_region_t,
+                  fldA  : c.legion_field_id_t,
+                  prB   : c.legion_physical_region_t,
+                  fldB  : c.legion_field_id_t)
 
   var rawA = get_raw_ptr_2d(rectA, prA, fldA)
   var rawB = get_raw_ptr_1d(rectB, prB, fldB)
@@ -216,8 +229,10 @@ terra dtrsv_terra(rectA:rect2d, rectB:rect1d, uplo:int, trans:int, n:int,
 end
 
 __demand(__leaf)
-task dtrsv(rA : region(ispace(int2d), double), rB : region(ispace(int1d), double), uplo:int, trans:int)
-where reads(rA), reads writes(rB)
+task dtrsv(rA : region(ispace(int2d), double), rB : region(ispace(int1d), double), uplo : int, trans : int)
+where
+  reads(rA),
+  reads writes(rB)
 do
   var rectA = rA.bounds
   var sizeA:int2d = rectA.hi - rectA.lo + {1, 1}
@@ -230,13 +245,13 @@ do
               __physical(rB)[0], __fields(rB)[0])
 end
 
-terra dgemv_terra(rectA:rect2d, rectX:rect1d, rectY:rect1d, trans:int, m:int, n:int,
-                  prA : c.legion_physical_region_t,
-                  fldA : c.legion_field_id_t,
-                  prX : c.legion_physical_region_t,
-                  fldX : c.legion_field_id_t,
-                  prY : c.legion_physical_region_t,
-                  fldY : c.legion_field_id_t)
+terra dgemv_terra(rectA : rect2d, rectX : rect1d, rectY : rect1d, trans : int, m : int, n : int,
+                  prA   : c.legion_physical_region_t,
+                  fldA  : c.legion_field_id_t,
+                  prX   : c.legion_physical_region_t,
+                  fldX  : c.legion_field_id_t,
+                  prY   : c.legion_physical_region_t,
+                  fldY  : c.legion_field_id_t)
 
   var rawA = get_raw_ptr_2d(rectA, prA, fldA)
   var rawX = get_raw_ptr_1d(rectX, prX, fldX)
@@ -251,10 +266,10 @@ terra dgemv_terra(rectA:rect2d, rectX:rect1d, rectY:rect1d, trans:int, m:int, n:
 end
 
 __demand(__leaf)
-task dgemv(rA : region(ispace(int2d), double),
-           rX : region(ispace(int1d), double),
-           rY : region(ispace(int1d), double),
-          trans:int)
+task dgemv(rA    : region(ispace(int2d), double),
+           rX    : region(ispace(int1d), double),
+           rY    : region(ispace(int1d), double),
+           trans : int)
 where reads(rA, rX), reads writes(rY)
 do
   var rectA = rA.bounds
@@ -272,4 +287,218 @@ do
               __physical(rA)[0], __fields(rA)[0],
               __physical(rX)[0], __fields(rX)[0],
               __physical(rY)[0], __fields(rY)[0])
+end
+
+__demand(__leaf)
+task fused_dpotrf(rA        : region(ispace(int2d), double),
+                  filled_rA : region(ispace(ptr), Filled),
+                  level     : int,
+                  interval  : int,
+                  debug     : bool)
+where
+  reads writes(rA), reads(filled_rA)
+do
+  for i in filled_rA.ispace do
+    var a = filled_rA[i]
+    var color = int3d{a.sep.x, a.sep.y, a.cluster}
+    var rectA = a.bounds
+    var size:int2d = rectA.hi - rectA.lo + {1, 1}
+
+    if debug then
+      c.printf("POTRF: {'A': (%d, %d, %d), 'A_Lo': (%d, %d), 'A_Hi': (%d, %d), 'SizeA': (%d, %d), 'Block': (%d, %d), 'Level': %d, 'Interval': %d}\n",
+               color.x, color.y, color.z, rectA.lo.x, rectA.lo.y, rectA.hi.x, rectA.hi.y, size.x, size.y,
+               color.x, color.y, level, interval)
+    end
+
+    dpotrf_terra(rectA, size.x, __physical(rA)[0], __fields(rA)[0])
+  end
+end
+
+__demand(__leaf)
+task fused_dtrsm(rA        : region(ispace(int2d), double),
+                 rB        : region(ispace(int2d), double),
+                 filled_rA : region(ispace(ptr), Filled),
+                 filled_rB : region(ispace(ptr), Filled),
+                 level     : int,
+                 interval  : int,
+                 debug     : bool)
+where
+  reads(rA, filled_rA, filled_rB), reads writes(rB)
+do
+  for i in filled_rA.ispace do
+    var a = filled_rA[i]
+    var Acolor = int3d{a.sep.x, a.sep.y, a.cluster}
+    var rectA = a.bounds
+    var sizeA = rectA.hi - rectA.lo + {1, 1}
+    for j in filled_rB.ispace do
+      var b = filled_rB[j]
+      var Bcolor = int3d{b.sep.x, b.sep.y, b.cluster}
+      var rectB = b.bounds
+      var sizeB:int2d = rectB.hi - rectB.lo + {1, 1}
+
+      if debug then
+        c.printf("TRSM: {'A': (%d, %d, %d), 'A_Lo': (%d, %d), 'A_Hi': (%d, %d), 'SizeA': (%d, %d), 'B': (%d, %d, %d), 'B_Lo': (%d, %d), 'B_Hi': (%d, %d), 'SizeB': (%d, %d), 'Block': (%d, %d), 'Level': %d, 'Interval': %d}\n",
+                 Acolor.x, Acolor.y, Acolor.z, rectA.lo.x, rectA.lo.y, rectA.hi.x, rectA.hi.y, sizeA.x, sizeA.y,
+                 Bcolor.x, Bcolor.y, Bcolor.z, rectB.lo.x, rectB.lo.y, rectB.hi.x, rectB.hi.y, sizeB.x, sizeB.y,
+                 Bcolor.x, Bcolor.y, level, interval)
+      end
+
+      dtrsm_terra(rectA, rectB, sizeB.x, sizeB.y,
+                  __physical(rA)[0], __fields(rA)[0],
+                  __physical(rB)[0], __fields(rB)[0])
+    end
+  end
+end
+
+__demand(__leaf)
+task fused_dsyrk(rA               : region(ispace(int2d), double),
+                 rB               : region(ispace(int2d), double),
+                 rC               : region(ispace(int2d), double),
+                 filled_rA        : region(ispace(ptr), Filled),
+                 filled_rB        : region(ispace(ptr), Filled),
+                 filled_rC        : region(ispace(ptr), Filled),
+                 col_cluster_size : int,
+                 level            : int,
+                 interval         : int,
+                 debug            : bool)
+where
+  reads(rA, rB, filled_rA, filled_rB, filled_rC),
+  reads writes(rC)
+do
+  for i in filled_rA.ispace do
+    var a = filled_rA[i]
+    var Acolor = int3d{a.sep.x, a.sep.y, a.cluster}
+    var row = Acolor.z
+    var rectA = a.bounds
+    var sizeA:int2d = rectA.hi - rectA.lo + {1, 1}
+
+    for j in filled_rB.ispace do
+      var b = filled_rB[j]
+      var Bcolor = int3d{b.sep.x, b.sep.y, b.cluster}
+      var col = Bcolor.z
+      var rectB = b.bounds
+      var sizeB:int2d = rectB.hi - rectB.lo + {1, 1}
+
+      var Ccolor = int3d{Acolor.x, Bcolor.x, row*col_cluster_size+col}
+      var rectC = rect2d{lo=int2d{0, 0}, hi={int2d{-1, -1}}}
+
+      for k in filled_rC.ispace do
+        var p = filled_rC[k]
+        var clust = int3d{p.sep.x, p.sep.y, p.cluster}
+        if clust == Ccolor then
+          rectC = p.bounds
+          break
+        end
+      end
+
+      var vol = c.legion_domain_get_volume(c.legion_domain_from_rect_2d(rectC))
+      if vol ~= 0 then
+
+        var sizeC:int2d = rectC.hi - rectC.lo + {1, 1}
+
+        if col < row then
+          var m = sizeA.x
+          var n = sizeB.x
+          var k = sizeA.y
+
+          if debug then
+            c.printf("GEMM: {'A': (%d, %d, %d), 'A_Lo': (%d, %d), 'A_Hi': (%d, %d), 'sizeA': (%d, %d), 'B': (%d, %d, %d), 'B_Lo': (%d, %d), 'B_Hi': (%d, %d), 'sizeB': (%d, %d), 'C': (%d, %d, %d), 'C_Lo': (%d, %d), 'C_Hi': (%d, %d), 'sizeC': (%d, %d), 'Block': (%d, %d), 'Level': %d, 'Interval': %d}\n",
+                     Acolor.x, Acolor.y, Acolor.z, rectA.lo.x, rectA.lo.y, rectA.hi.x, rectA.hi.y, sizeA.x, sizeA.y,
+                     Bcolor.x, Bcolor.y, Bcolor.z, rectB.lo.x, rectB.lo.y, rectB.hi.x, rectB.hi.y, sizeB.x, sizeB.y,
+                     Ccolor.x, Ccolor.y, Ccolor.z, rectC.lo.x, rectC.lo.y, rectC.hi.x, rectC.hi.y, sizeC.x, sizeC.y,
+                     Ccolor.x, Ccolor.y, level, interval)
+          end
+
+          dgemm_terra(rectA, rectB, rectC, m, n, k,
+                      __physical(rA)[0], __fields(rA)[0],
+                      __physical(rB)[0], __fields(rB)[0],
+                      __physical(rC)[0], __fields(rC)[0])
+
+        elseif col == row then
+          var n = sizeC.x
+          var k = sizeA.y
+
+          if debug then
+            c.printf("GEMM: {'A': (%d, %d, %d), 'A_Lo': (%d, %d), 'A_Hi': (%d, %d), 'sizeA': (%d, %d), 'B': (%d, %d, %d), 'B_Lo': (%d, %d), 'B_Hi': (%d, %d), 'sizeB': (%d, %d), 'C': (%d, %d, %d), 'C_Lo': (%d, %d), 'C_Hi': (%d, %d), 'sizeC': (%d, %d), 'Block': (%d, %d), 'Level': %d, 'Interval': %d}\n",
+                     Acolor.x, Acolor.y, Acolor.z, rectA.lo.x, rectA.lo.y, rectA.hi.x, rectA.hi.y, sizeA.x, sizeA.y,
+                     Bcolor.x, Bcolor.y, Bcolor.z, rectB.lo.x, rectB.lo.y, rectB.hi.x, rectB.hi.y, sizeB.x, sizeB.y,
+                     Ccolor.x, Ccolor.y, Ccolor.z, rectC.lo.x, rectC.lo.y, rectC.hi.x, rectC.hi.y, sizeC.x, sizeC.y,
+                     Ccolor.x, Ccolor.y, level, interval)
+          end
+
+          dsyrk_terra(rectA, rectC, n, k,
+                      __physical(rA)[0], __fields(rA)[0],
+                      __physical(rC)[0], __fields(rC)[0])
+        end
+      end
+    end
+  end
+end
+
+__demand(__leaf)
+task fused_dgemm(rA               : region(ispace(int2d), double),
+                 rB               : region(ispace(int2d), double),
+                 rC               : region(ispace(int2d), double),
+                 filled_rA        : region(ispace(ptr), Filled),
+                 filled_rB        : region(ispace(ptr), Filled),
+                 filled_rC        : region(ispace(ptr), Filled),
+                 col_cluster_size : int,
+                 level            : int,
+                 interval         : int,
+                 debug            : bool)
+where
+  reads(rA, rB, filled_rA, filled_rB, filled_rC),
+  reads writes(rC)
+do
+  for i in filled_rA.ispace do
+    var a = filled_rA[i]
+    var Acolor = int3d{a.sep.x, a.sep.y, a.cluster}
+    var row = Acolor.z
+    var rectA = a.bounds
+    var sizeA:int2d = rectA.hi - rectA.lo + {1, 1}
+
+    for j in filled_rB.ispace do
+      var b = filled_rB[j]
+      var Bcolor = int3d{b.sep.x, b.sep.y, b.cluster}
+      var col = Bcolor.z
+
+      var Ccolor = int3d{Acolor.x, Bcolor.x, row*col_cluster_size+col}
+      var rectC = rect2d{lo=int2d{0, 0}, hi={int2d{-1, -1}}}
+
+      for k in filled_rC.ispace do
+        var p = filled_rC[k]
+        var clust = int3d{p.sep.x, p.sep.y, p.cluster}
+        if clust == Ccolor then
+          rectC = p.bounds
+          break
+        end
+      end
+
+      var vol = c.legion_domain_get_volume(c.legion_domain_from_rect_2d(rectC))
+      if vol ~= 0 then
+
+        var sizeC:int2d = rectC.hi - rectC.lo + {1, 1}
+
+        var rectB = b.bounds
+        var sizeB:int2d = rectB.hi - rectB.lo + {1, 1}
+
+        var m = sizeA.x
+        var n = sizeB.x
+        var k = sizeA.y
+
+        if debug then
+          c.printf("GEMM: {'A': (%d, %d, %d), 'A_Lo': (%d, %d), 'A_Hi': (%d, %d), 'sizeA': (%d, %d), 'B': (%d, %d, %d), 'B_Lo': (%d, %d), 'B_Hi': (%d, %d), 'sizeB': (%d, %d), 'C': (%d, %d, %d), 'C_Lo': (%d, %d), 'C_Hi': (%d, %d), 'sizeC': (%d, %d), 'Block': (%d, %d), 'Level': %d, 'Interval': %d}\n",
+                   Acolor.x, Acolor.y, Acolor.z, rectA.lo.x, rectA.lo.y, rectA.hi.x, rectA.hi.y, sizeA.x, sizeA.y,
+                   Bcolor.x, Bcolor.y, Bcolor.z, rectB.lo.x, rectB.lo.y, rectB.hi.x, rectB.hi.y, sizeB.x, sizeB.y,
+                   Ccolor.x, Ccolor.y, Ccolor.z, rectC.lo.x, rectC.lo.y, rectC.hi.x, rectC.hi.y, sizeC.x, sizeC.y,
+                   Ccolor.x, Ccolor.y, level, interval)
+        end
+
+        dgemm_terra(rectA, rectB, rectC, m, n, k,
+                    __physical(rA)[0], __fields(rA)[0],
+                    __physical(rB)[0], __fields(rB)[0],
+                    __physical(rC)[0], __fields(rC)[0])
+      end
+    end
+  end
 end
