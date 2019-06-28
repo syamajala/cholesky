@@ -62,61 +62,45 @@ fspace Filled {
 
 terra dpotrf_terra(rect : rect2d, m:int,
                    pr   : c.legion_physical_region_t,
-                   fld  : c.legion_field_id_t)
+                   fld  : c.legion_field_id_t,
+                   block : int2d,
+                   level : int,
+                   interval : int)
   var rawA = get_raw_ptr_2d(rect, pr, fld)
   var uplo : rawstring = 'L'
   if m ~= 0 then
-    -- var start = c.legion_get_current_time_in_micros()
+    var start = c.legion_get_current_time_in_micros()
 
     lapack.LAPACKE_dpotrf(cblas.CblasColMajor, @uplo, m, rawA.ptr, rawA.offset)
 
-    -- var stop = c.legion_get_current_time_in_micros()
-    -- c.printf("BLAS: {'op': 'POTRF', 'M': %d, 'Time': %lu}\n", m, stop - start)
-  end
-end
 
-__demand(__leaf)
-task dpotrf(rA : region(ispace(int2d), double))
-where
-  reads writes(rA)
-do
-  var rect = rA.bounds
-  var size:int2d = rect.hi - rect.lo + {1, 1}
-  dpotrf_terra(rect, size.x, __physical(rA)[0], __fields(rA)[0])
+    -- c.printf("BLAS: {'op': 'POTRF', 'M': %d, 'Time': %lu}\n", m, stop - start)
+    var stop = c.legion_get_current_time_in_micros()
+    c.printf("Timing: {'op': 'POTRF BLAS', 'Block': (%d, %d), 'Level': %d, 'Interval': %d, 'Time': %lu}\n",
+             block.__ptr.x, block.__ptr.y, level, interval, stop - start)
+  end
 end
 
 terra dtrsm_terra(rectA : rect2d, rectB : rect2d, m : int, n : int,
                   prA   : c.legion_physical_region_t,
                   fldA  : c.legion_field_id_t,
                   prB   : c.legion_physical_region_t,
-                  fldB  : c.legion_field_id_t)
+                  fldB  : c.legion_field_id_t,
+                  block : int2d,
+                  level : int,
+                  interval : int)
   var rawA = get_raw_ptr_2d(rectA, prA, fldA)
   var rawB = get_raw_ptr_2d(rectB, prB, fldB)
   var alpha = 1.0
 
-  -- var start = c.legion_get_current_time_in_micros()
+  var start = c.legion_get_current_time_in_micros()
 
   cblas.cblas_dtrsm(cblas.CblasColMajor, cblas.CblasRight, cblas.CblasLower, cblas.CblasTrans, cblas.CblasNonUnit,
                     m, n, alpha, rawA.ptr, rawA.offset, rawB.ptr, rawB.offset)
 
-  -- var stop = c.legion_get_current_time_in_micros()
-  -- c.printf("BLAS: {'op': 'TRSM', 'M': %d, 'N': %d, 'Time': %lu}\n", m, n, stop - start)
-end
-
-__demand(__leaf)
-task dtrsm(rA : region(ispace(int2d), double),
-           rB : region(ispace(int2d), double))
-where
-  reads(rA),
-  reads writes(rB)
-do
-  var rectA = rA.bounds
-  var rectB = rB.bounds
-  var size:int2d = rectB.hi - rectB.lo + {1, 1}
-
-  dtrsm_terra(rectA, rectB, size.x, size.y,
-              __physical(rA)[0], __fields(rA)[0],
-              __physical(rB)[0], __fields(rB)[0])
+  var stop = c.legion_get_current_time_in_micros()
+  c.printf("Timing: {'op': 'TRSM BLAS', 'Block': (%d, %d), 'Level': %d, 'Interval': %d, 'Time': %lu}\n",
+           block.__ptr.x, block.__ptr.y, level, interval, stop - start)
 end
 
 terra dgemm_terra(rectA : rect2d, rectB : rect2d, rectC : rect2d, m : int, n : int, k : int,
@@ -125,7 +109,10 @@ terra dgemm_terra(rectA : rect2d, rectB : rect2d, rectC : rect2d, m : int, n : i
                   prB   : c.legion_physical_region_t,
                   fldB  : c.legion_field_id_t,
                   prC   : c.legion_physical_region_t,
-                  fldC  : c.legion_field_id_t)
+                  fldC  : c.legion_field_id_t,
+                  block : int2d,
+                  level : int,
+                  interval : int)
 
   var alpha = -1.0
   var beta = 1.0
@@ -134,47 +121,27 @@ terra dgemm_terra(rectA : rect2d, rectB : rect2d, rectC : rect2d, m : int, n : i
   var rawB = get_raw_ptr_2d(rectB, prB, fldB)
   var rawC = get_raw_ptr_2d(rectC, prC, fldC)
 
-  -- var start = c.legion_get_current_time_in_micros()
+  var start = c.legion_get_current_time_in_micros()
 
   cblas.cblas_dgemm(cblas.CblasColMajor, cblas.CblasNoTrans, cblas.CblasTrans, m, n, k,
                     alpha, rawA.ptr, rawA.offset,
                     rawB.ptr, rawB.offset,
                     beta, rawC.ptr, rawC.offset)
 
-  -- var stop = c.legion_get_current_time_in_micros()
   -- c.printf("BLAS: {'op': 'GEMM', 'M': %d, 'N': %d, 'K': %d, 'Time': %lu}\n", m, n, k, stop - start)
-end
-
-__demand(__leaf)
-task dgemm(rA : region(ispace(int2d), double),
-           rB : region(ispace(int2d), double),
-           rC : region(ispace(int2d), double))
-where
-  reads(rA, rB),
-  reads writes(rC)
-do
-  var rectA = rA.bounds
-  var sizeA:int2d = rectA.hi - rectA.lo + {1, 1}
-  var rectB = rB.bounds
-  var sizeB:int2d = rectB.hi - rectB.lo + {1, 1}
-  var rectC = rC.bounds
-  var sizeC:int2d = rectC.hi - rectC.lo + {1, 1}
-
-  var m = sizeC.x
-  var n = sizeC.y
-  var k = sizeA.y
-
-  dgemm_terra(rectA, rectB, rectC, m, n, k,
-              __physical(rA)[0], __fields(rA)[0],
-              __physical(rB)[0], __fields(rB)[0],
-              __physical(rC)[0], __fields(rC)[0])
+  var stop = c.legion_get_current_time_in_micros()
+  c.printf("Timing: {'op': 'GEMM BLAS', 'Block': (%d, %d), 'Level': %d, 'Interval': %d, 'Time': %lu}\n",
+           block.__ptr.x, block.__ptr.y, level, interval, stop - start)
 end
 
 terra dsyrk_terra(rectA : rect2d, rectC : rect2d, n : int, k : int,
                   prA   : c.legion_physical_region_t,
                   fldA  : c.legion_field_id_t,
                   prC   : c.legion_physical_region_t,
-                  fldC  : c.legion_field_id_t)
+                  fldC  : c.legion_field_id_t,
+                  block : int2d,
+                  level : int,
+                  interval : int)
 
   var alpha = -1.0
   var beta = 1.0
@@ -182,37 +149,18 @@ terra dsyrk_terra(rectA : rect2d, rectC : rect2d, n : int, k : int,
   var rawA = get_raw_ptr_2d(rectA, prA, fldA)
   var rawC = get_raw_ptr_2d(rectC, prC, fldC)
 
-  -- var start = c.legion_get_current_time_in_micros()
+  var start = c.legion_get_current_time_in_micros()
 
   cblas.cblas_dsyrk(cblas.CblasColMajor, cblas.CblasLower, cblas.CblasNoTrans, n, k,
                    alpha, rawA.ptr, rawA.offset,
                    beta, rawC.ptr, rawC.offset)
 
-  -- var stop = c.legion_get_current_time_in_micros()
   -- c.printf("BLAS: {'op': 'SYRK', 'N': %d, 'K': %d, 'Time': %lu}\n", n, k, stop - start)
+  var stop = c.legion_get_current_time_in_micros()
+  c.printf("Timing: {'op': 'GEMM BLAS', 'Block': (%d, %d), 'Level': %d, 'Interva': %d, 'Time': %lu}\n",
+           block.__ptr.x, block.__ptr.y, level, interval, stop - start)
 
 end
-
-__demand(__leaf)
-task dsyrk(rA : region(ispace(int2d), double),
-           rC : region(ispace(int2d), double))
-where
-  reads(rA),
-  reads writes(rC)
-do
-  var rectA = rA.bounds
-  var sizeA:int2d = rectA.hi - rectA.lo + {1, 1}
-  var rectC = rC.bounds
-  var sizeC:int2d = rectA.hi - rectA.lo + {1, 1}
-
-  var n = sizeC.x
-  var k = sizeA.y
-
-  dsyrk_terra(rectA, rectC, n, k,
-              __physical(rA)[0], __fields(rA)[0],
-              __physical(rC)[0], __fields(rC)[0])
-end
-
 
 terra dtrsv_terra(rectA : rect2d, rectB : rect1d, uplo : int, trans : int, n : int,
                   prA   : c.legion_physical_region_t,
@@ -298,11 +246,15 @@ task fused_dpotrf(rA        : region(ispace(int2d), double),
 where
   reads writes(rA), reads(filled_rA)
 do
+  var potrf_start = c.legion_get_current_time_in_micros()
+  var block : int2d
+
   for i in filled_rA.ispace do
     var a = filled_rA[i]
     var color = int3d{a.sep.x, a.sep.y, a.cluster}
     var rectA = a.bounds
     var size:int2d = rectA.hi - rectA.lo + {1, 1}
+    block = int2d{a.sep.x, a.sep.y}
 
     if debug then
       c.printf("POTRF: {'A': (%d, %d, %d), 'A_Lo': (%d, %d), 'A_Hi': (%d, %d), 'SizeA': (%d, %d), 'Block': (%d, %d), 'Level': %d, 'Interval': %d}\n",
@@ -310,8 +262,18 @@ do
                color.x, color.y, level, interval)
     end
 
-    dpotrf_terra(rectA, size.x, __physical(rA)[0], __fields(rA)[0])
+    var start = c.legion_get_current_time_in_micros()
+
+    dpotrf_terra(rectA, size.x, __physical(rA)[0], __fields(rA)[0], block, level, interval)
+
+    var stop = c.legion_get_current_time_in_micros()
+    c.printf("Timing: {'op': 'POTRF Terra', 'Block': (%d, %d), 'Level': %d, 'Interval': %d, 'Time': %lu}\n",
+             block.x, block.y, level, interval, stop - start)
   end
+
+  var potrf_stop = c.legion_get_current_time_in_micros()
+  c.printf("Timing: {'op': 'POTRF Task', 'Block': (%d, %d), 'Level': %d, 'Interval': %d, 'Time': %lu}\n",
+           block.x, block.y, level, interval, potrf_stop - potrf_start)
 end
 
 __demand(__leaf)
@@ -325,6 +287,9 @@ task fused_dtrsm(rA        : region(ispace(int2d), double),
 where
   reads(rA, filled_rA, filled_rB), reads writes(rB)
 do
+  var trsm_start = c.legion_get_current_time_in_micros()
+  var block : int2d
+
   for i in filled_rA.ispace do
     var a = filled_rA[i]
     var Acolor = int3d{a.sep.x, a.sep.y, a.cluster}
@@ -335,6 +300,7 @@ do
       var Bcolor = int3d{b.sep.x, b.sep.y, b.cluster}
       var rectB = b.bounds
       var sizeB:int2d = rectB.hi - rectB.lo + {1, 1}
+      block = int2d{b.sep.x, b.sep.y}
 
       if debug then
         c.printf("TRSM: {'A': (%d, %d, %d), 'A_Lo': (%d, %d), 'A_Hi': (%d, %d), 'SizeA': (%d, %d), 'B': (%d, %d, %d), 'B_Lo': (%d, %d), 'B_Hi': (%d, %d), 'SizeB': (%d, %d), 'Block': (%d, %d), 'Level': %d, 'Interval': %d}\n",
@@ -343,11 +309,23 @@ do
                  Bcolor.x, Bcolor.y, level, interval)
       end
 
+      var start = c.legion_get_current_time_in_micros()
+
       dtrsm_terra(rectA, rectB, sizeB.x, sizeB.y,
                   __physical(rA)[0], __fields(rA)[0],
-                  __physical(rB)[0], __fields(rB)[0])
+                  __physical(rB)[0], __fields(rB)[0],
+                  block, level, interval)
+
+      var stop = c.legion_get_current_time_in_micros()
+      c.printf("Timing: {'op': 'TRSM Terra', 'Block': (%d, %d), 'Level': %d, 'Interval': %d, 'Time': %lu}\n",
+               block.x, block.y,
+               level, interval, stop - start)
     end
   end
+
+  var trsm_stop = c.legion_get_current_time_in_micros()
+  c.printf("Timing: {'op': 'TRSM Task', 'Block': (%d, %d), 'Level': %d, 'Interval': %d, 'Time': %lu}\n",
+           block.x, block.y, level, interval, trsm_stop - trsm_start)
 end
 
 __demand(__leaf)
@@ -365,6 +343,9 @@ where
   reads(rA, rB, filled_rA, filled_rB, filled_rC),
   reads writes(rC)
 do
+  var syrk_start = c.legion_get_current_time_in_micros()
+  var block : int2d
+
   for i in filled_rA.ispace do
     var a = filled_rA[i]
     var Acolor = int3d{a.sep.x, a.sep.y, a.cluster}
@@ -381,6 +362,7 @@ do
 
       var Ccolor = int3d{Acolor.x, Bcolor.x, row*col_cluster_size+col}
       var rectC = rect2d{lo=int2d{0, 0}, hi={int2d{-1, -1}}}
+      block = int2d{Ccolor.x, Ccolor.y}
 
       for k in filled_rC.ispace do
         var p = filled_rC[k]
@@ -409,10 +391,17 @@ do
                      Ccolor.x, Ccolor.y, level, interval)
           end
 
+          var start = c.legion_get_current_time_in_micros()
+
           dgemm_terra(rectA, rectB, rectC, m, n, k,
                       __physical(rA)[0], __fields(rA)[0],
                       __physical(rB)[0], __fields(rB)[0],
-                      __physical(rC)[0], __fields(rC)[0])
+                      __physical(rC)[0], __fields(rC)[0],
+                      block, level, interval)
+
+          var stop = c.legion_get_current_time_in_micros()
+          c.printf("Timing: {'op': 'GEMM Terra', 'Block': (%d, %d), 'Level': %d, 'Interval': %d, 'Time': %lu}\n",
+                   block.x, block.y, level, interval, stop - start)
 
         elseif col == row then
           var n = sizeC.x
@@ -426,13 +415,25 @@ do
                      Ccolor.x, Ccolor.y, level, interval)
           end
 
+          var start = c.legion_get_current_time_in_micros()
+
           dsyrk_terra(rectA, rectC, n, k,
                       __physical(rA)[0], __fields(rA)[0],
-                      __physical(rC)[0], __fields(rC)[0])
+                      __physical(rC)[0], __fields(rC)[0],
+                      block, level, interval)
+
+          var stop = c.legion_get_current_time_in_micros()
+          c.printf("Timing: {'op': 'GEMM Terra', 'Block': (%d, %d), 'Level': %d, 'Interval': %d, 'Time': %lu}\n",
+                   block.x, block.y, level, interval, stop - start)
+
         end
       end
     end
   end
+
+  var syrk_stop = c.legion_get_current_time_in_micros()
+  c.printf("Timing: {'op': 'GEMM Task', 'Block': (%d, %d), 'Level': %d, 'Interval': %d, 'Time': %lu}\n",
+           block.x, block.y, level, interval, syrk_stop - syrk_start)
 end
 
 __demand(__leaf)
@@ -450,6 +451,9 @@ where
   reads(rA, rB, filled_rA, filled_rB, filled_rC),
   reads writes(rC)
 do
+  var gemm_start = c.legion_get_current_time_in_micros()
+  var block : int2d
+
   for i in filled_rA.ispace do
     var a = filled_rA[i]
     var Acolor = int3d{a.sep.x, a.sep.y, a.cluster}
@@ -464,6 +468,7 @@ do
 
       var Ccolor = int3d{Acolor.x, Bcolor.x, row*col_cluster_size+col}
       var rectC = rect2d{lo=int2d{0, 0}, hi={int2d{-1, -1}}}
+      block = int2d{Ccolor.x, Ccolor.y}
 
       for k in filled_rC.ispace do
         var p = filled_rC[k]
@@ -494,11 +499,22 @@ do
                    Ccolor.x, Ccolor.y, level, interval)
         end
 
+        var start = c.legion_get_current_time_in_micros()
+
         dgemm_terra(rectA, rectB, rectC, m, n, k,
                     __physical(rA)[0], __fields(rA)[0],
                     __physical(rB)[0], __fields(rB)[0],
-                    __physical(rC)[0], __fields(rC)[0])
+                    __physical(rC)[0], __fields(rC)[0],
+                    block, level, interval)
+
+        var stop = c.legion_get_current_time_in_micros()
+        c.printf("Timing: {'op': 'GEMM Terra', 'Block': (%d, %d), 'Level': %d, 'Interval': %d, 'Time': %lu}\n",
+                 block.x, block.y, level, interval, stop - start)
       end
     end
   end
+
+  var gemm_stop = c.legion_get_current_time_in_micros()
+  c.printf("Timing: {'op': 'GEMM Task', 'Block': (%d, %d), 'Level': %d, 'Interval': %d, 'Time': %lu}\n",
+           block.x, block.y, level, interval, gemm_stop - gemm_start)
 end
