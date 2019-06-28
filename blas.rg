@@ -66,19 +66,23 @@ terra dpotrf_terra(rect : rect2d, m:int,
                    block : int2d,
                    level : int,
                    interval : int)
+  var potrf_start = c.legion_get_current_time_in_micros()
+
   var rawA = get_raw_ptr_2d(rect, pr, fld)
   var uplo : rawstring = 'L'
-  if m ~= 0 then
-    var start = c.legion_get_current_time_in_micros()
 
-    lapack.LAPACKE_dpotrf(cblas.CblasColMajor, @uplo, m, rawA.ptr, rawA.offset)
+  var start = c.legion_get_current_time_in_micros()
 
+  lapack.LAPACKE_dpotrf(cblas.CblasColMajor, @uplo, m, rawA.ptr, rawA.offset)
 
-    -- c.printf("BLAS: {'op': 'POTRF', 'M': %d, 'Time': %lu}\n", m, stop - start)
-    var stop = c.legion_get_current_time_in_micros()
-    c.printf("Timing: {'op': 'POTRF BLAS', 'Block': (%d, %d), 'Level': %d, 'Interval': %d, 'Time': %lu}\n",
-             block.__ptr.x, block.__ptr.y, level, interval, stop - start)
-  end
+  var stop = c.legion_get_current_time_in_micros()
+  c.printf("Timing: {'op': 'POTRF BLAS', 'Block': (%d, %d), 'M': %d, 'Level': %d, 'Interval': %d, 'Time': %lu}\n",
+           block.__ptr.x, block.__ptr.y, m, level, interval, stop - start)
+
+  -- c.printf("BLAS: {'op': 'POTRF', 'M': %d, 'Time': %lu}\n", m, stop - start)
+
+  c.printf("Timing: {'op': 'POTRF Terra', 'Block': (%d, %d), 'M': %d, 'Level': %d, 'Interval': %d, 'Time': %lu}\n",
+           block.__ptr.x, block.__ptr.y, m, level, interval, stop - potrf_start)
 end
 
 terra dtrsm_terra(rectA : rect2d, rectB : rect2d, m : int, n : int,
@@ -89,6 +93,8 @@ terra dtrsm_terra(rectA : rect2d, rectB : rect2d, m : int, n : int,
                   block : int2d,
                   level : int,
                   interval : int)
+  var dtrsm_start = c.legion_get_current_time_in_micros()
+
   var rawA = get_raw_ptr_2d(rectA, prA, fldA)
   var rawB = get_raw_ptr_2d(rectB, prB, fldB)
   var alpha = 1.0
@@ -99,8 +105,11 @@ terra dtrsm_terra(rectA : rect2d, rectB : rect2d, m : int, n : int,
                     m, n, alpha, rawA.ptr, rawA.offset, rawB.ptr, rawB.offset)
 
   var stop = c.legion_get_current_time_in_micros()
-  c.printf("Timing: {'op': 'TRSM BLAS', 'Block': (%d, %d), 'Level': %d, 'Interval': %d, 'Time': %lu}\n",
-           block.__ptr.x, block.__ptr.y, level, interval, stop - start)
+  c.printf("Timing: {'op': 'TRSM BLAS', 'Block': (%d, %d), 'M': %d, 'N': %d, 'Level': %d, 'Interval': %d, 'Time': %lu}\n",
+           block.__ptr.x, block.__ptr.y, m, n, level, interval, stop - start)
+
+  c.printf("Timing: {'op': 'TRSM Terra', 'Block': (%d, %d), 'M': %d, 'N': %d, 'Level': %d, 'Interval': %d, 'Time': %lu}\n",
+           block.__ptr.x, block.__ptr.y, m, n, level, interval, stop - dtrsm_start)
 end
 
 terra dgemm_terra(rectA : rect2d, rectB : rect2d, rectC : rect2d, m : int, n : int, k : int,
@@ -113,6 +122,7 @@ terra dgemm_terra(rectA : rect2d, rectB : rect2d, rectC : rect2d, m : int, n : i
                   block : int2d,
                   level : int,
                   interval : int)
+  var gemm_start = c.legion_get_current_time_in_micros()
 
   var alpha = -1.0
   var beta = 1.0
@@ -130,8 +140,11 @@ terra dgemm_terra(rectA : rect2d, rectB : rect2d, rectC : rect2d, m : int, n : i
 
   -- c.printf("BLAS: {'op': 'GEMM', 'M': %d, 'N': %d, 'K': %d, 'Time': %lu}\n", m, n, k, stop - start)
   var stop = c.legion_get_current_time_in_micros()
-  c.printf("Timing: {'op': 'GEMM BLAS', 'Block': (%d, %d), 'Level': %d, 'Interval': %d, 'Time': %lu}\n",
-           block.__ptr.x, block.__ptr.y, level, interval, stop - start)
+  c.printf("Timing: {'op': 'GEMM BLAS', 'Block': (%d, %d), 'M': %d, 'N': %d, 'K': %d, 'Level': %d, 'Interval': %d, 'Time': %lu}\n",
+           block.__ptr.x, block.__ptr.y, m, n, k, level, interval, stop - start)
+
+  c.printf("Timing: {'op': 'GEMM Terra', 'Block': (%d, %d), 'M': %d, 'N': %d, 'K': %d, 'Level': %d, 'Interval': %d, 'Time': %lu}\n",
+           block.__ptr.x, block.__ptr.y, m, n, k, level, interval, stop - gemm_start)
 end
 
 terra dsyrk_terra(rectA : rect2d, rectC : rect2d, n : int, k : int,
@@ -142,6 +155,7 @@ terra dsyrk_terra(rectA : rect2d, rectC : rect2d, n : int, k : int,
                   block : int2d,
                   level : int,
                   interval : int)
+  var syrk_start = c.legion_get_current_time_in_micros()
 
   var alpha = -1.0
   var beta = 1.0
@@ -157,9 +171,11 @@ terra dsyrk_terra(rectA : rect2d, rectC : rect2d, n : int, k : int,
 
   -- c.printf("BLAS: {'op': 'SYRK', 'N': %d, 'K': %d, 'Time': %lu}\n", n, k, stop - start)
   var stop = c.legion_get_current_time_in_micros()
-  c.printf("Timing: {'op': 'GEMM BLAS', 'Block': (%d, %d), 'Level': %d, 'Interva': %d, 'Time': %lu}\n",
-           block.__ptr.x, block.__ptr.y, level, interval, stop - start)
+  c.printf("Timing: {'op': 'GEMM BLAS', 'Block': (%d, %d), 'N': %d, 'K': %d, 'Level': %d, 'Interval': %d, 'Time': %lu}\n",
+           block.__ptr.x, block.__ptr.y, n, k, level, interval, stop - start)
 
+  c.printf("Timing: {'op': 'GEMM Terra', 'Block': (%d, %d), 'N': %d, 'K': %d, 'Level': %d, 'Interval': %d, 'Time': %lu}\n",
+           block.__ptr.x, block.__ptr.y, n, k, level, interval, stop - syrk_start)
 end
 
 terra dtrsv_terra(rectA : rect2d, rectB : rect1d, uplo : int, trans : int, n : int,
@@ -267,7 +283,7 @@ do
     dpotrf_terra(rectA, size.x, __physical(rA)[0], __fields(rA)[0], block, level, interval)
 
     var stop = c.legion_get_current_time_in_micros()
-    c.printf("Timing: {'op': 'POTRF Terra', 'Block': (%d, %d), 'Level': %d, 'Interval': %d, 'Time': %lu}\n",
+    c.printf("Timing: {'op': 'POTRF Terra Call', 'Block': (%d, %d), 'Level': %d, 'Interval': %d, 'Time': %lu}\n",
              block.x, block.y, level, interval, stop - start)
   end
 
@@ -317,7 +333,7 @@ do
                   block, level, interval)
 
       var stop = c.legion_get_current_time_in_micros()
-      c.printf("Timing: {'op': 'TRSM Terra', 'Block': (%d, %d), 'Level': %d, 'Interval': %d, 'Time': %lu}\n",
+      c.printf("Timing: {'op': 'TRSM Terra Call', 'Block': (%d, %d), 'Level': %d, 'Interval': %d, 'Time': %lu}\n",
                block.x, block.y,
                level, interval, stop - start)
     end
@@ -357,24 +373,24 @@ do
       var b = filled_rB[j]
       var Bcolor = int3d{b.sep.x, b.sep.y, b.cluster}
       var col = Bcolor.z
-      var rectB = b.bounds
-      var sizeB:int2d = rectB.hi - rectB.lo + {1, 1}
 
-      var Ccolor = int3d{Acolor.x, Bcolor.x, row*col_cluster_size+col}
-      var rectC = rect2d{lo=int2d{0, 0}, hi={int2d{-1, -1}}}
-      block = int2d{Ccolor.x, Ccolor.y}
+      if col <= row then
 
-      for k in filled_rC.ispace do
-        var p = filled_rC[k]
-        var clust = int3d{p.sep.x, p.sep.y, p.cluster}
-        if clust == Ccolor then
-          rectC = p.bounds
-          break
+        var rectB = b.bounds
+        var sizeB:int2d = rectB.hi - rectB.lo + {1, 1}
+
+        var Ccolor = int3d{Acolor.x, Bcolor.x, row*col_cluster_size+col}
+        var rectC = rect2d{lo=int2d{0, 0}, hi={int2d{-1, -1}}}
+        block = int2d{Ccolor.x, Ccolor.y}
+
+        for k in filled_rC.ispace do
+          var p = filled_rC[k]
+          var clust = int3d{p.sep.x, p.sep.y, p.cluster}
+          if clust == Ccolor then
+            rectC = p.bounds
+            break
+          end
         end
-      end
-
-      var vol = c.legion_domain_get_volume(c.legion_domain_from_rect_2d(rectC))
-      if vol ~= 0 then
 
         var sizeC:int2d = rectC.hi - rectC.lo + {1, 1}
 
@@ -400,7 +416,7 @@ do
                       block, level, interval)
 
           var stop = c.legion_get_current_time_in_micros()
-          c.printf("Timing: {'op': 'GEMM Terra', 'Block': (%d, %d), 'Level': %d, 'Interval': %d, 'Time': %lu}\n",
+          c.printf("Timing: {'op': 'GEMM Terra Call', 'Block': (%d, %d), 'Level': %d, 'Interval': %d, 'Time': %lu}\n",
                    block.x, block.y, level, interval, stop - start)
 
         elseif col == row then
@@ -423,8 +439,8 @@ do
                       block, level, interval)
 
           var stop = c.legion_get_current_time_in_micros()
-          c.printf("Timing: {'op': 'GEMM Terra', 'Block': (%d, %d), 'Level': %d, 'Interval': %d, 'Time': %lu}\n",
-                   block.x, block.y, level, interval, stop - start)
+          c.printf("Timing: {'op': 'GEMM Terra Call', 'Block': (%d, %d), 'N': %d, 'K': %d, 'Level': %d, 'Interval': %d, 'Time': %lu}\n",
+                   block.x, block.y, n, k, level, interval, stop - start)
 
         end
       end
@@ -479,38 +495,34 @@ do
         end
       end
 
-      var vol = c.legion_domain_get_volume(c.legion_domain_from_rect_2d(rectC))
-      if vol ~= 0 then
+      var sizeC:int2d = rectC.hi - rectC.lo + {1, 1}
 
-        var sizeC:int2d = rectC.hi - rectC.lo + {1, 1}
+      var rectB = b.bounds
+      var sizeB:int2d = rectB.hi - rectB.lo + {1, 1}
 
-        var rectB = b.bounds
-        var sizeB:int2d = rectB.hi - rectB.lo + {1, 1}
+      var m = sizeA.x
+      var n = sizeB.x
+      var k = sizeA.y
 
-        var m = sizeA.x
-        var n = sizeB.x
-        var k = sizeA.y
-
-        if debug then
-          c.printf("GEMM: {'A': (%d, %d, %d), 'A_Lo': (%d, %d), 'A_Hi': (%d, %d), 'sizeA': (%d, %d), 'B': (%d, %d, %d), 'B_Lo': (%d, %d), 'B_Hi': (%d, %d), 'sizeB': (%d, %d), 'C': (%d, %d, %d), 'C_Lo': (%d, %d), 'C_Hi': (%d, %d), 'sizeC': (%d, %d), 'Block': (%d, %d), 'Level': %d, 'Interval': %d}\n",
-                   Acolor.x, Acolor.y, Acolor.z, rectA.lo.x, rectA.lo.y, rectA.hi.x, rectA.hi.y, sizeA.x, sizeA.y,
-                   Bcolor.x, Bcolor.y, Bcolor.z, rectB.lo.x, rectB.lo.y, rectB.hi.x, rectB.hi.y, sizeB.x, sizeB.y,
-                   Ccolor.x, Ccolor.y, Ccolor.z, rectC.lo.x, rectC.lo.y, rectC.hi.x, rectC.hi.y, sizeC.x, sizeC.y,
-                   Ccolor.x, Ccolor.y, level, interval)
-        end
-
-        var start = c.legion_get_current_time_in_micros()
-
-        dgemm_terra(rectA, rectB, rectC, m, n, k,
-                    __physical(rA)[0], __fields(rA)[0],
-                    __physical(rB)[0], __fields(rB)[0],
-                    __physical(rC)[0], __fields(rC)[0],
-                    block, level, interval)
-
-        var stop = c.legion_get_current_time_in_micros()
-        c.printf("Timing: {'op': 'GEMM Terra', 'Block': (%d, %d), 'Level': %d, 'Interval': %d, 'Time': %lu}\n",
-                 block.x, block.y, level, interval, stop - start)
+      if debug then
+        c.printf("GEMM: {'A': (%d, %d, %d), 'A_Lo': (%d, %d), 'A_Hi': (%d, %d), 'sizeA': (%d, %d), 'B': (%d, %d, %d), 'B_Lo': (%d, %d), 'B_Hi': (%d, %d), 'sizeB': (%d, %d), 'C': (%d, %d, %d), 'C_Lo': (%d, %d), 'C_Hi': (%d, %d), 'sizeC': (%d, %d), 'Block': (%d, %d), 'Level': %d, 'Interval': %d}\n",
+                 Acolor.x, Acolor.y, Acolor.z, rectA.lo.x, rectA.lo.y, rectA.hi.x, rectA.hi.y, sizeA.x, sizeA.y,
+                 Bcolor.x, Bcolor.y, Bcolor.z, rectB.lo.x, rectB.lo.y, rectB.hi.x, rectB.hi.y, sizeB.x, sizeB.y,
+                 Ccolor.x, Ccolor.y, Ccolor.z, rectC.lo.x, rectC.lo.y, rectC.hi.x, rectC.hi.y, sizeC.x, sizeC.y,
+                 Ccolor.x, Ccolor.y, level, interval)
       end
+
+      var start = c.legion_get_current_time_in_micros()
+
+      dgemm_terra(rectA, rectB, rectC, m, n, k,
+                  __physical(rA)[0], __fields(rA)[0],
+                  __physical(rB)[0], __fields(rB)[0],
+                  __physical(rC)[0], __fields(rC)[0],
+                  block, level, interval)
+
+      var stop = c.legion_get_current_time_in_micros()
+      c.printf("Timing: {'op': 'GEMM Terra Call', 'Block': (%d, %d), 'Level': %d, 'Interval': %d, 'Time': %lu}\n",
+               block.x, block.y, level, interval, stop - start)
     end
   end
 

@@ -1208,6 +1208,7 @@ task main()
   var filled_clusters_intervals = partition(filled_clusters_filled.interval, ispace(int1d, levels))
   var filled_clusters = cross_product(filled_clusters_sep, filled_clusters_intervals)
 
+
   __demand(__trace)
   for iteration = 0, iterations do
     var interval = 0
@@ -1223,6 +1224,7 @@ task main()
       fill_block(color, banner.N, load_factor, nonzero_entries, block, row_dofs, col_dofs, clusters_region, clusters_sep, clusters_int, clusters, fpblock, debug)
     end
 
+    __fence(__execution, __block)
     var factor_start = c.legion_get_current_time_in_micros()
     for lvl = levels-1, -1, -1 do
       c.printf("Factoring Level: %d Interval: %d Iteration: %d\n", lvl, interval, iteration)
@@ -1242,6 +1244,7 @@ task main()
           var sep = level[sep_idx].node
           var pivot_color = int2d{sep, sep}
           var filled_pivot = filled_clusters[pivot_color][interval_lbl]
+
           fused_dpotrf(mat_part[pivot_color], filled_pivot, lvl, interval_lbl, debug)
 
           if debug then
@@ -1354,7 +1357,9 @@ task main()
       end
     end
 
-    c.printf("Done factoring Iteration: %d.\n", iteration)
+    __fence(__execution, __block)
+    var factor_stop = c.legion_get_current_time_in_micros()
+    c.printf("Done factoring Iteration: %d Time: %lu.\n", iteration, factor_stop - factor_start)
   end
 
   if c.strcmp(factor_file, '') ~= 0 then
